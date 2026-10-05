@@ -7,6 +7,7 @@ const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_sch
 const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
 const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql", import.meta.url);
 const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_engine.sql", import.meta.url);
+const d7MigrationUrl = new URL("../supabase/migrations/202610050005_d7_billing.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -29,6 +30,7 @@ async function createDatabase() {
   await db.exec(await readFile(d3MigrationUrl, "utf8"));
   await db.exec(await readFile(d4MigrationUrl, "utf8"));
   await db.exec(await readFile(d5MigrationUrl, "utf8"));
+  await db.exec(await readFile(d7MigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),

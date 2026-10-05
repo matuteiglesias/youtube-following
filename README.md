@@ -130,6 +130,14 @@ Automated tests use fake providers and stubbed HTTP/token calls. No provider
 credentials were available for live channel or sidecar acceptance during D2, and
 no deployment was performed.
 
+## D7 Polar billing
+
+The one-plan Polar checkout, signed webhook, and entitlement view are configured
+with server-only values. See [Polar configuration](docs/deployment/POLAR.md) and
+[D7 acceptance evidence](docs/acceptance/D7.md). The browser reads its limited
+plan/status/usage view from `GET /api/me/entitlement`; only verified provider
+events can change the entitlement row.
+
 
 ## Development
 
