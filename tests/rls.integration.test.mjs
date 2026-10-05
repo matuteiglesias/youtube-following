@@ -6,6 +6,7 @@ import test from "node:test";
 const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_schema.sql", import.meta.url);
 const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
 const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql", import.meta.url);
+const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_engine.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -27,6 +28,7 @@ async function createDatabase() {
   await db.exec(await readFile(migrationUrl, "utf8"));
   await db.exec(await readFile(d3MigrationUrl, "utf8"));
   await db.exec(await readFile(d4MigrationUrl, "utf8"));
+  await db.exec(await readFile(d5MigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -241,4 +243,105 @@ test("D4 feed RPC scopes to follows, pages by published_at and video_uid, and in
   await assert.rejects(asRole(db, "anon", null, () => db.query(
     "select * from public.read_feed_page($1, $2, $3, $4, $5)", [a, null, null, null, 20],
   )));
+});
+
+test("D5 serializes global claims, charges only the successful winner, and reuses the cache", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  const b = "00000000-0000-0000-0000-00000000000b";
+  const videoUid = "youtube:abcdefghijk";
+  const key = `sha256:${"a".repeat(64)}`;
+  await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
+  await db.exec("set role service_role");
+  await db.query("select public.grant_internal_test_entitlement($1, 30, 10)", [a]);
+  await db.query("select public.grant_internal_test_entitlement($1, 30, 10)", [b]);
+  await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status)
+    values ('${videoUid}','youtube-channel:UC1','abcdefghijk','Eligible','https://youtube.com/watch?v=abcdefghijk',now(),121,'public','completed')`);
+  const claimArgs = [a, videoUid, key, "v1", "primary", 3];
+  const winner = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result", claimArgs);
+  const loser = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result", [b, ...claimArgs.slice(1)]);
+  assert.equal(winner.rows[0].result.state, "claimed");
+  assert.equal(loser.rows[0].result.state, "generating");
+  const done = await db.query(`select public.complete_summary_generation($1,$2,$3,$4,$5,$6,$7,$8) as saved`,
+    [key, a, "provider-summary-1", "A useful summary.", ["Point one"], "en", "Media Monitor", "test-model"]);
+  assert.equal(done.rows[0].saved, true);
+  assert.equal((await db.query("select count(*)::int as n from public.summary_usage where user_id=$1", [a])).rows[0].n, 1);
+  assert.equal((await db.query("select count(*)::int as n from public.summary_usage where user_id=$1", [b])).rows[0].n, 0);
+  const cached = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result", [b, ...claimArgs.slice(1)]);
+  assert.equal(cached.rows[0].result.state, "available");
+  assert.equal(cached.rows[0].result.summary.summary_text, "A useful summary.");
+});
+
+test("D5 quota, eligibility, and failed attempts stop before provider ownership or remain free", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
+  await db.exec("set role service_role");
+  await db.query("select public.grant_internal_test_entitlement($1, 30, 1)", [a]);
+  await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status)
+    values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','Eligible','https://youtube.com/watch?v=abcdefghijk',now(),121,'public','completed'),
+           ('youtube:lmnopqrstuv','youtube-channel:UC1','lmnopqrstuv','Live','https://youtube.com/watch?v=lmnopqrstuv',now(),300,'public','upcoming'),
+           ('youtube:mnopqrstuvw','youtube-channel:UC1','mnopqrstuvw','Short','https://youtube.com/watch?v=mnopqrstuvw',now(),89,'public','completed'),
+           ('youtube:ZYXWVUTSRQP','youtube-channel:UC1','ZYXWVUTSRQP','Long','https://youtube.com/watch?v=ZYXWVUTSRQP',now(),7201,'public','completed')`);
+  const eligibilityFeed = await db.query("select feed_item from public.read_feed_page($1,$2,$3,$4,$5)",
+    [a, null, null, null, 20]);
+  const stateByVideo = Object.fromEntries(eligibilityFeed.rows.map((row) => [row.feed_item.video.video_uid, row.feed_item.summary.state]));
+  assert.equal(stateByVideo["youtube:mnopqrstuvw"], "short_video");
+  assert.equal(stateByVideo["youtube:ZYXWVUTSRQP"], "long_video");
+  assert.equal(stateByVideo["youtube:lmnopqrstuv"], "live_or_upcoming");
+  const overQuota = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", `sha256:${"b".repeat(64)}`, "v1", "primary", 3]);
+  assert.equal(overQuota.rows[0].result.state, "quota_blocked");
+  assert.equal((await db.query("select count(*)::int as n from public.summary_generation_claims")).rows[0].n, 0);
+  const live = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:lmnopqrstuv", `sha256:${"c".repeat(64)}`, "v1", "primary", 5]);
+  assert.equal(live.rows[0].result.state, "live_or_upcoming");
+  await db.query("select public.grant_internal_test_entitlement($1, 30, 10)", [a]);
+  const key = `sha256:${"d".repeat(64)}`;
+  const failedClaim = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", key, "v1", "primary", 3]);
+  assert.equal(failedClaim.rows[0].result.state, "claimed");
+  await db.query("select public.fail_summary_generation($1,$2)", [key, a]);
+  assert.equal((await db.query("select count(*)::int as n from public.summary_usage")).rows[0].n, 0);
+  assert.equal((await db.query("select state from public.summaries where summary_key=$1", [key])).rows[0].state, "failed");
+  await db.query("update public.summaries set retry_after=now() - interval '1 second' where summary_key=$1", [key]);
+  const secondAttempt = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", key, "v1", "primary", 3]);
+  assert.equal(secondAttempt.rows[0].result.state, "claimed");
+  await db.query("select public.fail_summary_generation($1,$2)", [key, a]);
+  await db.query("update public.summaries set retry_after=now() - interval '1 second' where summary_key=$1", [key]);
+  const thirdAttempt = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", key, "v1", "primary", 3]);
+  assert.equal(thirdAttempt.rows[0].result.state, "claimed");
+  await db.query("select public.fail_summary_generation($1,$2)", [key, a]);
+  await db.query("update public.summaries set retry_after=now() - interval '1 second' where summary_key=$1", [key]);
+  const exhausted = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", key, "v1", "primary", 3]);
+  assert.deepEqual(exhausted.rows[0].result, { state: "failed", retryable: false });
+});
+
+test("D5 reserves allowance atomically across different concurrent summaries", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
+  await db.exec("set role service_role");
+  await db.query("select public.grant_internal_test_entitlement($1, 30, 4)", [a]);
+  await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability)
+    values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','One','https://youtube.com/watch?v=abcdefghijk',now(),121,'public'),
+           ('youtube:lmnopqrstuv','youtube-channel:UC1','lmnopqrstuv','Two','https://youtube.com/watch?v=lmnopqrstuv',now(),121,'public')`);
+  const firstKey = `sha256:${"e".repeat(64)}`;
+  const secondKey = `sha256:${"f".repeat(64)}`;
+  const first = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:abcdefghijk", firstKey, "v1", "primary", 3]);
+  const second = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:lmnopqrstuv", secondKey, "v1", "primary", 2]);
+  assert.equal(first.rows[0].result.state, "claimed");
+  assert.equal(second.rows[0].result.state, "quota_blocked");
+  await db.query("select public.fail_summary_generation($1,$2)", [firstKey, a]);
+  const afterRelease = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",
+    [a, "youtube:lmnopqrstuv", secondKey, "v1", "primary", 2]);
+  assert.equal(afterRelease.rows[0].result.state, "claimed");
 });

@@ -30,6 +30,7 @@ export type Video = {
   duration_seconds: number | null;
   availability: "public" | "private" | "unavailable" | "unknown";
   provider_snapshot_id: string | null;
+  live_status?: "unknown" | "completed" | "live" | "upcoming";
 };
 
 export type SummaryState =

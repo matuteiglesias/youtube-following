@@ -4,9 +4,9 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChannelRecord } from "@/lib/db";
-import type { FeedItem, FeedPage } from "@/lib/feed";
+import { summaryStateLabel, type FeedItem, type FeedPage } from "@/lib/feed";
 
 type Props = {
   initialPage: FeedPage;
@@ -44,20 +44,7 @@ function availabilityLabel(value: FeedItem["video"]["availability"]): string | n
   return "Availability unknown";
 }
 
-function summaryLabel(state: FeedItem["summary"]["state"]): string {
-  switch (state) {
-    case "available": return "Summary";
-    case "generating": return "Summarizing…";
-    case "short_video": return "Short clip · no summary";
-    case "long_video": return "Long video · summary unavailable";
-    case "live_or_upcoming": return "Live or upcoming · not summarized";
-    case "quota_blocked": return "Summary allowance reached";
-    case "failed": return "Summary temporarily unavailable";
-    case "not_requested": return "No summary yet";
-  }
-}
-
-function FeedCard({ item }: { item: FeedItem }) {
+function FeedCard({ item, onRetry }: { item: FeedItem; onRetry: (videoUid: string) => void }) {
   const duration = durationLabel(item.video.duration_seconds);
   const availability = availabilityLabel(item.video.availability);
   return <article className="feed-card">
@@ -74,12 +61,15 @@ function FeedCard({ item }: { item: FeedItem }) {
       <h2 className="feed-card__title">{item.video.title}</h2>
       {availability ? <p className="feed-card__availability">{availability}</p> : null}
       <section className="feed-card__summary" aria-label="Summary status">
-        <h3>{summaryLabel(item.summary.state)}</h3>
+        <h3>{summaryStateLabel(item.summary.state)}</h3>
         {item.summary.state === "available" && item.summary.summary
           ? <p>{item.summary.summary}</p>
           : null}
         {item.summary.state === "available" && item.summary.key_points.length > 0
           ? <ul>{item.summary.key_points.slice(0, 3).map((point, index) => <li key={`${index}-${point}`}>{point}</li>)}</ul>
+          : null}
+        {item.summary.state === "failed" && item.summary.retryable
+          ? <button type="button" onClick={() => onRetry(item.video.video_uid)}>Try summary again</button>
           : null}
       </section>
       <a className="feed-card__watch" href={item.video.canonical_url} target="_blank" rel="noreferrer">
@@ -96,6 +86,53 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
     ? "Your feed is temporarily unavailable. Try again shortly."
     : filterUnavailable ? "That channel isn’t in your follows." : null);
   const [loading, setLoading] = useState(false);
+  const activeSummaryRequests = useRef(new Set<string>());
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  async function requestSummary(videoUid: string) {
+    if (activeSummaryRequests.current.size >= 2 || activeSummaryRequests.current.has(videoUid)) return;
+    activeSummaryRequests.current.add(videoUid);
+    try {
+      const response = await fetch(`/api/videos/${encodeURIComponent(videoUid)}/summary`, { method: "POST", cache: "no-store" });
+      const payload = await response.json() as { summary?: FeedItem["summary"] };
+      if (!response.ok || !payload.summary) throw new Error("Summary is temporarily unavailable.");
+      setItems((current) => current.map((item) => item.video.video_uid === videoUid
+        && JSON.stringify(item.summary) !== JSON.stringify(payload.summary)
+        ? { ...item, summary: payload.summary! } : item));
+    } catch {
+      setSummaryError("A summary couldn’t be loaded. Your feed is still available.");
+    } finally {
+      activeSummaryRequests.current.delete(videoUid);
+      setItems((current) => [...current]);
+    }
+  }
+
+  useEffect(() => {
+    const candidates = items.filter((item) => item.summary.state === "not_requested");
+    let scheduled = 0;
+    for (const item of candidates) {
+      if (scheduled >= 2) break;
+      const uid = item.video.video_uid;
+      if (activeSummaryRequests.current.has(uid)) continue;
+      if (item.video.live_status === "live"
+        || item.video.live_status === "upcoming" || item.video.availability !== "public"
+        || item.video.duration_seconds !== null && (item.video.duration_seconds < 90 || item.video.duration_seconds > 7200)) continue;
+      scheduled += 1;
+      window.setTimeout(() => { void requestSummary(uid); }, 0);
+    }
+  }, [items]);
+
+  useEffect(() => {
+    const generating = items.filter((item) => item.summary.state === "generating");
+    if (generating.length === 0) return;
+    const poll = window.setInterval(() => {
+      for (const item of generating) {
+        if (activeSummaryRequests.current.size >= 2) break;
+        void requestSummary(item.video.video_uid);
+      }
+    }, 4000);
+    return () => window.clearInterval(poll);
+  }, [items]);
 
   async function loadMore() {
     if (!nextCursor || loading) return;
@@ -122,6 +159,10 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
     }
   }
 
+  async function retrySummary(videoUid: string) {
+    await requestSummary(videoUid);
+  }
+
   return <section className="feed-screen" aria-labelledby="feed-heading">
     <div className="feed-heading-row">
       <div><p className="placeholder__label">Feed</p><h1 id="feed-heading">Following</h1></div>
@@ -136,8 +177,9 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
     </div>
 
     {error ? <p role="alert" className="feed-error">{error}</p> : null}
+    {summaryError ? <p role="status" className="feed-error">{summaryError}</p> : null}
 
-    {items.length > 0 ? <div className="feed-list">{items.map((item) => <FeedCard key={item.video.video_uid} item={item} />)}</div>
+    {items.length > 0 ? <div className="feed-list">{items.map((item) => <FeedCard key={item.video.video_uid} item={item} onRetry={retrySummary} />)}</div>
       : error
         ? <div className="feed-empty">
           <h2>{filterUnavailable ? error : "We couldn’t load your feed."}</h2>

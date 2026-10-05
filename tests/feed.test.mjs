@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeFeedCursor, encodeFeedCursor, makeFeedPage, parseFeedQuery } from "../src/lib/feed.ts";
+import { decodeFeedCursor, encodeFeedCursor, makeFeedPage, parseFeedQuery, summaryStateLabel } from "../src/lib/feed.ts";
 import { handleFeedGet } from "../src/lib/feed-route.ts";
 
 const cursor = { published_at: "2026-10-05T12:00:00.000Z", video_uid: "youtube:abcdefghijk" };
@@ -71,6 +71,13 @@ test("feed page uses the last visible item as its next keyset cursor", () => {
     video_uid: rows[1].video.video_uid,
   });
   assert.equal(makeFeedPage(rows.slice(0, 2), 2).next_cursor, null);
+});
+
+test("feed presents every D5 summary state with bounded, user-safe copy", () => {
+  const states = ["available", "generating", "not_requested", "short_video", "long_video", "live_or_upcoming", "quota_blocked", "failed"];
+  for (const state of states) assert.ok(summaryStateLabel(state), state);
+  assert.equal(summaryStateLabel("quota_blocked"), "Summary allowance reached");
+  assert.equal(summaryStateLabel("failed"), "Summary temporarily unavailable");
 });
 
 test("feed route authenticates, rejects malformed queries and scopes reads to the session user", async () => {

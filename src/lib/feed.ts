@@ -26,6 +26,7 @@ export type FeedItem = {
     duration_seconds: number | null;
     availability: "public" | "private" | "unavailable" | "unknown";
     provider_snapshot_id: string | null;
+    live_status?: "unknown" | "completed" | "live" | "upcoming";
   };
   channel: {
     channel_uid: string;
@@ -44,6 +45,19 @@ export type FeedItem = {
     retryable: boolean | null;
   };
 };
+
+export function summaryStateLabel(state: FeedItem["summary"]["state"]): string {
+  switch (state) {
+    case "available": return "Summary";
+    case "generating": return "Summarizing…";
+    case "short_video": return "Short clip · no summary";
+    case "long_video": return "Long video · summary unavailable";
+    case "live_or_upcoming": return "Live or upcoming · not summarized";
+    case "quota_blocked": return "Summary allowance reached";
+    case "failed": return "Summary temporarily unavailable";
+    case "not_requested": return "No summary yet";
+  }
+}
 
 export type FeedPage = {
   items: FeedItem[];
