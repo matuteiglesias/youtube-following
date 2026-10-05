@@ -1,0 +1,111 @@
+:root {
+  color: #171717;
+  background: #ffffff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #171717;
+}
+
+a {
+  color: inherit;
+}
+
+.site-header {
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.shell {
+  width: min(100% - 32px, 860px);
+  margin-inline: auto;
+}
+
+.site-header__inner {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+nav {
+  display: flex;
+  gap: 16px;
+}
+
+nav a {
+  text-underline-offset: 4px;
+}
+
+.page {
+  padding-block: 48px;
+}
+
+.placeholder {
+  border: 1px solid #dddddd;
+  border-radius: 12px;
+  padding: 28px;
+}
+
+.placeholder__label {
+  margin: 0 0 8px;
+  color: #666666;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.placeholder h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2rem, 7vw, 3rem);
+  line-height: 1.05;
+}
+
+.placeholder p {
+  max-width: 62ch;
+  margin: 0;
+  line-height: 1.6;
+}
+
+.placeholder p + p {
+  margin-top: 12px;
+}
+
+.placeholder__note {
+  color: #666666;
+  font-size: 0.925rem;
+}
+
+@media (max-width: 520px) {
+  .site-header__inner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding-block: 16px;
+  }
+
+  .page {
+    padding-block: 28px;
+  }
+
+  .placeholder {
+    padding: 20px;
+  }
+}

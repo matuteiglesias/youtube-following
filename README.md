@@ -56,6 +56,46 @@ Next.js web/API on Cloud Run
 
 The Media Monitor dependency is transitional. Do not extract it before the product vertical is proven.
 
+## D0 local development
+
+D0 is deliberately feature-empty. It contains the production-shaped Next.js foundation, two placeholder routes, a health endpoint, CI, environment validation, and a Cloud Run-compatible container. It does **not** contain auth, database schema, provider integration, billing, or follow behavior.
+
+Use Node.js 24 LTS plus npm to match CI and the container image.
+
+```bash
+npm ci
+npm run dev
+```
+
+Local routes:
+
+- `http://localhost:3000/` — Feed placeholder.
+- `http://localhost:3000/following` — Following placeholder.
+- `http://localhost:3000/api/health` — health endpoint.
+
+D0 has no required secrets. Runtime validation checks `NODE_ENV` and `PORT` when present.
+
+Run the full local checks with:
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+CI runs the same checks and builds the container.
+
+For the Cloud Run-shaped local smoke:
+
+```bash
+docker build -t youtube-following:d0 .
+docker run --rm -p 8080:8080 youtube-following:d0
+curl http://localhost:8080/api/health
+```
+
+See [docs/deployment/GCP_NAMING.md](docs/deployment/GCP_NAMING.md) for the initial GCP project/resource naming plan.
+
 ## Development
 
 Agents must follow [AGENTS.md](AGENTS.md) and implement the DAG one node at a time.
