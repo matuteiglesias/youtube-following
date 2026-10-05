@@ -185,3 +185,14 @@ export async function listFeedRows(userId: string, query: FeedQuery): Promise<Fe
   if (error) throw new Error("Could not load feed");
   return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
 }
+
+/** Public demo reads a bounded global projection for server-configured channels only. */
+export async function listDemoFeedRows(channelUids: string[], limit = 20): Promise<FeedItem[]> {
+  if (channelUids.length === 0) return [];
+  const { data, error } = await admin().rpc("read_demo_feed_page", {
+    requested_channel_uids: channelUids,
+    requested_limit: limit,
+  });
+  if (error) throw new Error("Could not load demo feed");
+  return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
+}

@@ -4,7 +4,17 @@ import { FollowingScreen } from "@/components/following-screen";
 
 export default async function FollowingPage() {
   const user = await requireAuthenticatedUser();
-  const [items, entitlement] = await Promise.all([listMyFollows(user.id), getEntitlement(user.id)]);
+  let items: Awaited<ReturnType<typeof listMyFollows>> = [];
+  let limit = 0;
+  let initialError = false;
+  try {
+    [items, limit] = await Promise.all([
+      listMyFollows(user.id),
+      getEntitlement(user.id).then((entitlement) => entitlement?.follow_limit ?? 0),
+    ]);
+  } catch {
+    initialError = true;
+  }
   return <FollowingScreen
     initialItems={items.map((item) => ({
       followed_at: item.followed_at,
@@ -18,6 +28,7 @@ export default async function FollowingPage() {
         thumbnail_url: item.channel.thumbnail_url,
       },
     }))}
-    limit={entitlement?.follow_limit ?? 0}
+    limit={limit}
+    initialError={initialError}
   />;
 }
