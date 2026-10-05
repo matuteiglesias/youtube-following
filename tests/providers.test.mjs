@@ -141,7 +141,7 @@ test("Media Monitor adapter authenticates service call and translates sidecar pa
         video_id: videoId,
         canonical_url: `https://www.youtube.com/watch?v=${videoId}`,
         channel: { native_channel_id: channelId, display_name: "Sample & Channel" },
-        metadata: { title: "Video", published_at: "2026-10-01T12:00:00Z", duration_seconds: 95, availability: "public", snapshot_id: "snapshot-1", thumbnail_url: "https://img.example/video.jpg" },
+        metadata: { title: "Video", published_at: "2026-10-01T12:00:00Z", duration_seconds: 95, availability: "public", liveBroadcastContent: "upcoming", snapshot_id: "snapshot-1", thumbnail_url: "https://img.example/video.jpg" },
         summary: { state: "not_attempted", summary_id: null, summary: null, key_points: [], provider: null, model: null },
         internal_trace: "must-not-escape",
       });
@@ -151,10 +151,11 @@ test("Media Monitor adapter authenticates service call and translates sidecar pa
     { audience: "https://sidecar-xyz.run.app", paths: sidecarPaths },
   );
   const video = await provider.ensureVideo(`https://www.youtube.com/watch?v=${videoId}`);
-  assert.deepEqual(Object.keys(video).sort(), ["availability", "canonical_url", "channel_uid", "duration_seconds", "native_video_id", "published_at", "provider_snapshot_id", "thumbnail_url", "title", "video_uid"].sort());
+  assert.deepEqual(Object.keys(video).sort(), ["availability", "canonical_url", "channel_uid", "duration_seconds", "live_status", "native_video_id", "published_at", "provider_snapshot_id", "thumbnail_url", "title", "video_uid"].sort());
   assert.equal(video.video_uid, `youtube:${videoId}`);
   assert.equal(video.channel_uid, `youtube-channel:${channelId}`);
   assert.equal(video.provider_snapshot_id, "snapshot-1");
+  assert.equal(video.live_status, "upcoming");
   assert.equal(await provider.inspectVideo(video.video_uid).then((result) => result.title), "Video");
   const summary = await provider.ensureSummary(video.video_uid);
   assert.deepEqual(summary.summary.key_points, ["One point", "Two point"]);

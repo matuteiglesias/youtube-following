@@ -83,6 +83,13 @@ function productVideo(payload: unknown): Video {
   const availability: Video["availability"] = rawAvailability === "public" || rawAvailability === "private"
     || rawAvailability === "unavailable" ? rawAvailability : "unknown";
   const snapshotId = stringValue(pick(metadata, "provider_snapshot_id", "snapshot_id", "artifact_id"));
+  const rawLiveStatus = stringValue(pick(metadata, "live_status", "live_broadcast_content", "liveBroadcastContent")
+    ?? pick(record, "live_status", "live_broadcast_content", "liveBroadcastContent"))?.toLowerCase();
+  const isLive = pick(metadata, "is_live", "live") === true || pick(record, "is_live", "live") === true;
+  const isUpcoming = pick(metadata, "is_upcoming", "upcoming") === true || pick(record, "is_upcoming", "upcoming") === true;
+  const liveStatus: NonNullable<Video["live_status"]> = isLive || rawLiveStatus === "live"
+    ? "live" : isUpcoming || rawLiveStatus === "upcoming" ? "upcoming"
+      : rawLiveStatus === "completed" || rawLiveStatus === "none" ? "completed" : "unknown";
   return {
     video_uid: `youtube:${nativeVideoId}`,
     channel_uid: `youtube-channel:${nativeChannelId}`,
@@ -94,6 +101,7 @@ function productVideo(payload: unknown): Video {
     duration_seconds: duration,
     availability,
     provider_snapshot_id: snapshotId,
+    live_status: liveStatus,
   };
 }
 
