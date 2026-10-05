@@ -93,6 +93,36 @@ nav a {
   font-size: 0.925rem;
 }
 
+.following-heading-row, .follow-form__controls, .channel-preview, .follow-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.following-heading-row { justify-content: space-between; margin-bottom: 28px; }
+.following-screen h1 { margin: 0; font-size: clamp(2rem, 7vw, 3rem); }
+.follow-count { color: #666; font-weight: 700; }
+.follow-form { display: grid; gap: 8px; margin-bottom: 20px; }
+.follow-form label { font-weight: 700; }
+.follow-form input { flex: 1; min-width: 0; padding: 11px 12px; border: 1px solid #bbb; border-radius: 6px; font: inherit; }
+button { border: 1px solid #171717; border-radius: 6px; background: #171717; color: white; cursor: pointer; font: inherit; padding: 10px 14px; }
+button:disabled { cursor: wait; opacity: .55; }
+.follow-message { padding: 12px 14px; border-radius: 6px; background: #f3f3f3; }
+.link-button { border: 0; background: transparent; color: #171717; padding: 0; text-decoration: underline; }
+.channel-preview, .follow-row { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-top: 16px; }
+.channel-preview > div, .follow-row > div { flex: 1; min-width: 0; }
+.channel-preview h2, .follow-row h2, .empty-following h2 { margin: 0 0 4px; font-size: 1.1rem; }
+.channel-preview p, .follow-row p, .channel-preview a, .follow-row a { margin: 0; color: #666; overflow-wrap: anywhere; }
+.channel-preview a, .follow-row a { font-size: .9rem; }
+.channel-preview img, .follow-row img { border-radius: 50%; object-fit: cover; }
+.empty-following { border: 1px dashed #bbb; border-radius: 10px; margin-top: 24px; padding: 24px; }
+.empty-following p { margin-bottom: 0; color: #555; }
+
+@media (max-width: 620px) {
+  .follow-form__controls, .channel-preview, .follow-row { align-items: stretch; flex-direction: column; }
+  .follow-form__controls button, .channel-preview button, .follow-row button { width: 100%; }
+}
+
 @media (max-width: 520px) {
   .site-header__inner {
     align-items: flex-start;
