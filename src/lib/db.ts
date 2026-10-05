@@ -1,5 +1,6 @@
 import "server-only";
 import type { ResolvedChannel, Video } from "@/lib/providers/contracts";
+import type { FeedItem, FeedQuery } from "@/lib/feed";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -75,8 +76,56 @@ export async function deleteFollow(userId: string, channelUid: string): Promise<
 }
 
 export async function upsertVideo(video: Video): Promise<void> {
-  const { error } = await admin().from("videos").upsert(video, { onConflict: "native_video_id" });
+  const { error } = await admin().from("videos").upsert({ ...video, live_status: video.live_status ?? "unknown" }, { onConflict: "native_video_id" });
   if (error) throw new Error("Could not save video");
+}
+
+export type SummaryClaimResult = { state: string; summary?: Record<string, unknown>; retryable?: boolean };
+
+export async function claimSummaryGeneration(input: {
+  userId: string; videoUid: string; summaryKey: string; specVersion: string;
+  language: string; chargedMinutes: number;
+}): Promise<SummaryClaimResult> {
+  const { data, error } = await admin().rpc("claim_summary_generation", {
+    target_user_id: input.userId,
+    target_video_uid: input.videoUid,
+    target_summary_key: input.summaryKey,
+    target_spec_version: input.specVersion,
+    target_language: input.language,
+    target_charged_minutes: input.chargedMinutes,
+  });
+  if (error) throw new Error("Could not claim summary generation");
+  return data as SummaryClaimResult;
+}
+
+export async function completeSummaryGeneration(input: {
+  summaryKey: string; userId: string; summaryId: string; summary: string;
+  keyPoints: string[]; language: string; provider: string | null; model: string | null;
+}): Promise<boolean> {
+  const { data, error } = await admin().rpc("complete_summary_generation", {
+    target_summary_key: input.summaryKey, target_user_id: input.userId,
+    target_summary_id: input.summaryId, target_summary_text: input.summary,
+    target_key_points: input.keyPoints, target_language: input.language,
+    target_provider: input.provider, target_model: input.model,
+  });
+  if (error) throw new Error("Could not save summary");
+  return data === true;
+}
+
+export async function failSummaryGeneration(summaryKey: string, userId: string): Promise<boolean> {
+  const { data, error } = await admin().rpc("fail_summary_generation", {
+    target_summary_key: summaryKey, target_user_id: userId,
+  });
+  if (error) throw new Error("Could not record summary failure");
+  return data === true;
+}
+
+export async function getVideoForSummary(videoUid: string) {
+  const { data, error } = await admin().from("videos")
+    .select("video_uid,duration_seconds,availability,live_status")
+    .eq("video_uid", videoUid).maybeSingle();
+  if (error) throw new Error("Could not load video");
+  return data as { video_uid: string; duration_seconds: number | null; availability: string; live_status: string } | null;
 }
 
 export async function markChannelChecked(channelUid: string, status: ChannelRecord["monitoring_status"], nextCheck: string): Promise<void> {
@@ -122,4 +171,17 @@ export async function getEntitlement(userId: string) {
     .eq("user_id", userId).maybeSingle();
   if (error) throw new Error("Could not load entitlement");
   return data;
+}
+
+/** Read one bounded, user-scoped page. This query never invokes a provider. */
+export async function listFeedRows(userId: string, query: FeedQuery): Promise<FeedItem[]> {
+  const { data, error } = await admin().rpc("read_feed_page", {
+    target_user_id: userId,
+    after_published_at: query.cursor?.published_at ?? null,
+    after_video_uid: query.cursor?.video_uid ?? null,
+    requested_channel_uid: query.channel_uid,
+    requested_limit: query.limit,
+  });
+  if (error) throw new Error("Could not load feed");
+  return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
 }
