@@ -7,7 +7,7 @@ const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_sch
 const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
 const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql", import.meta.url);
 const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_engine.sql", import.meta.url);
-const d8MigrationUrl = new URL("../supabase/migrations/202610050005_d8_demo_feed.sql", import.meta.url);
+const d8MigrationUrl = new URL("../supabase/migrations/202610050006_d8_demo_feed.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
