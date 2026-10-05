@@ -5,7 +5,7 @@ import { validateEnvironment } from "../scripts/validate-env.mjs";
 
 test("environment validation accepts Cloud Run-style runtime values", () => {
   assert.deepEqual(
-    validateEnvironment({ NODE_ENV: "production", PORT: "8080", APP_URL: "https://following.example", NEXT_PUBLIC_SUPABASE_URL: "https://project.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "public", SUPABASE_SERVICE_ROLE_KEY: "server" }),
+    validateEnvironment({ NODE_ENV: "production", PORT: "8080", APP_URL: "https://following.example", NEXT_PUBLIC_SUPABASE_URL: "https://project.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "public", SUPABASE_SERVICE_ROLE_KEY: "server", YOUTUBE_API_KEY: "youtube", MEDIA_MONITOR_SIDECAR_URL: "https://sidecar.example", MEDIA_MONITOR_ENSURE_PATH: "/ensure", MEDIA_MONITOR_INSPECT_PATH: "/inspect", MEDIA_MONITOR_SUMMARY_PATH: "/summary" }),
     { nodeEnv: "production", port: 8080 },
   );
 });

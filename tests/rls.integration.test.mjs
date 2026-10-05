@@ -4,6 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import test from "node:test";
 
 const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_schema.sql", import.meta.url);
+const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -23,6 +24,7 @@ async function createDatabase() {
     grant execute on function auth.uid() to public;
   `);
   await db.exec(await readFile(migrationUrl, "utf8"));
+  await db.exec(await readFile(d3MigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -154,4 +156,23 @@ test("internal-test entitlements are callable only through the server role", asy
   await db.exec("reset role");
   const entitlement = await db.query("select plan_code,status,follow_limit,generation_minutes_limit from public.entitlements where user_id = $1", [a]);
   assert.deepEqual(entitlement.rows[0], { plan_code: "internal_test", status: "active", follow_limit: 30, generation_minutes_limit: 600 });
+});
+
+test("follow-limit RPC is server-only, idempotent, and rejects the next follow", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  await db.exec("set role service_role");
+  await db.exec("delete from public.follows where user_id = '00000000-0000-0000-0000-00000000000a'");
+  await db.query("select public.grant_internal_test_entitlement($1, $2, $3)", [a, 1, 0]);
+  await db.exec("insert into public.channels (channel_uid, native_channel_id, title, canonical_url) values ('youtube-channel:UC2', 'UC2', 'Second', 'https://youtube.com/channel/UC2')");
+  const first = await db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC1"]);
+  const replay = await db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC1"]);
+  await db.exec("reset role");
+  assert.equal(first.rows[0].created, true);
+  assert.equal(replay.rows[0].created, false);
+  await db.exec("set role service_role");
+  await assert.rejects(db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"]));
+  await db.exec("reset role");
+  await assert.rejects(asRole(db, "authenticated", a, () => db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"])));
 });
