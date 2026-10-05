@@ -1,5 +1,6 @@
 import "server-only";
 import type { ResolvedChannel, Video } from "@/lib/providers/contracts";
+import type { FeedItem, FeedQuery } from "@/lib/feed";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -122,4 +123,17 @@ export async function getEntitlement(userId: string) {
     .eq("user_id", userId).maybeSingle();
   if (error) throw new Error("Could not load entitlement");
   return data;
+}
+
+/** Read one bounded, user-scoped page. This query never invokes a provider. */
+export async function listFeedRows(userId: string, query: FeedQuery): Promise<FeedItem[]> {
+  const { data, error } = await admin().rpc("read_feed_page", {
+    target_user_id: userId,
+    after_published_at: query.cursor?.published_at ?? null,
+    after_video_uid: query.cursor?.video_uid ?? null,
+    requested_channel_uid: query.channel_uid,
+    requested_limit: query.limit,
+  });
+  if (error) throw new Error("Could not load feed");
+  return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
 }

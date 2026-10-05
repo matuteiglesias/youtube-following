@@ -5,6 +5,7 @@ import test from "node:test";
 
 const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_schema.sql", import.meta.url);
 const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
+const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -25,6 +26,7 @@ async function createDatabase() {
   `);
   await db.exec(await readFile(migrationUrl, "utf8"));
   await db.exec(await readFile(d3MigrationUrl, "utf8"));
+  await db.exec(await readFile(d4MigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -175,4 +177,68 @@ test("follow-limit RPC is server-only, idempotent, and rejects the next follow",
   await assert.rejects(db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"]));
   await db.exec("reset role");
   await assert.rejects(asRole(db, "authenticated", a, () => db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"])));
+});
+
+test("D4 feed RPC scopes to follows, pages by published_at and video_uid, and includes only available cached summaries", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  const b = "00000000-0000-0000-0000-00000000000b";
+  await db.exec(`
+    insert into public.channels (channel_uid, native_channel_id, title, canonical_url)
+      values ('youtube-channel:UC2', 'UC2', 'Other channel', 'https://youtube.com/channel/UC2');
+    insert into public.follows (user_id, channel_uid)
+      values ('${b}', 'youtube-channel:UC2');
+    insert into public.videos (video_uid, channel_uid, native_video_id, title, canonical_url, published_at)
+      values
+        ('youtube:aaaaaaaaaaa', 'youtube-channel:UC1', 'aaaaaaaaaaa', 'Tie A', 'https://youtube.com/watch?v=aaaaaaaaaaa', '2099-12-31T12:00:00Z'),
+        ('youtube:bbbbbbbbbbb', 'youtube-channel:UC1', 'bbbbbbbbbbb', 'Tie B', 'https://youtube.com/watch?v=bbbbbbbbbbb', '2099-12-31T12:00:00Z'),
+        ('youtube:ccccccccccc', 'youtube-channel:UC1', 'ccccccccccc', 'Older', 'https://youtube.com/watch?v=ccccccccccc', '2099-12-31T11:00:00Z'),
+        ('youtube:ddddddddddd', 'youtube-channel:UC2', 'ddddddddddd', 'Other user only', 'https://youtube.com/watch?v=ddddddddddd', '2100-01-01T00:00:00Z');
+    insert into public.summaries (summary_key, video_uid, spec_version, language, state, summary_id, summary_text, key_points, generated_at)
+      values ('feed-summary', 'youtube:bbbbbbbbbbb', 'v1', 'en', 'available', 'provider-summary', 'Cached only', '["One point"]'::jsonb, '2099-12-31T13:00:00Z');
+  `);
+
+  const firstPage = await db.query(
+    "select feed_item from public.read_feed_page($1, $2, $3, $4, $5)",
+    [a, null, null, null, 2],
+  );
+  assert.deepEqual(firstPage.rows.map((row) => row.feed_item.video.video_uid), [
+    "youtube:bbbbbbbbbbb",
+    "youtube:aaaaaaaaaaa",
+    "youtube:ccccccccccc",
+  ]);
+  assert.equal(firstPage.rows[0].feed_item.summary.state, "available");
+  assert.equal(firstPage.rows[0].feed_item.summary.summary, "Cached only");
+  assert.equal(firstPage.rows[1].feed_item.summary.state, "not_requested");
+  assert.deepEqual(Object.keys(firstPage.rows[0].feed_item).sort(), ["channel", "summary", "video"]);
+
+  const nextPage = await db.query(
+    "select feed_item from public.read_feed_page($1, $2, $3, $4, $5)",
+    [a, firstPage.rows[1].feed_item.video.published_at, firstPage.rows[1].feed_item.video.video_uid, null, 2],
+  );
+  assert.deepEqual(nextPage.rows.map((row) => row.feed_item.video.video_uid), ["youtube:ccccccccccc", "youtube:v1"]);
+
+  const filtered = await db.query(
+    "select feed_item from public.read_feed_page($1, $2, $3, $4, $5)",
+    [a, null, null, "youtube-channel:UC1", 20],
+  );
+  assert.ok(filtered.rows.every((row) => row.feed_item.channel.channel_uid === "youtube-channel:UC1"));
+  const notFollowed = await db.query(
+    "select feed_item from public.read_feed_page($1, $2, $3, $4, $5)",
+    [a, null, null, "youtube-channel:UC2", 20],
+  );
+  assert.deepEqual(notFollowed.rows, []);
+  const emptyAccount = await db.query(
+    "select feed_item from public.read_feed_page($1, $2, $3, $4, $5)",
+    ["00000000-0000-0000-0000-00000000000c", null, null, null, 20],
+  );
+  assert.deepEqual(emptyAccount.rows, []);
+
+  await assert.rejects(asRole(db, "authenticated", a, () => db.query(
+    "select * from public.read_feed_page($1, $2, $3, $4, $5)", [a, null, null, null, 20],
+  )));
+  await assert.rejects(asRole(db, "anon", null, () => db.query(
+    "select * from public.read_feed_page($1, $2, $3, $4, $5)", [a, null, null, null, 20],
+  )));
 });
