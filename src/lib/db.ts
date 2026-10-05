@@ -173,6 +173,42 @@ export async function getEntitlement(userId: string) {
   return data;
 }
 
+export async function getEntitlementUsage(userId: string, billingPeriod: string | null) {
+  const client = admin();
+  const [{ count: followCount, error: followError }, usageResult] = await Promise.all([
+    client.from("follows").select("channel_uid", { count: "exact", head: true }).eq("user_id", userId),
+    billingPeriod
+      ? client.from("summary_usage").select("charged_minutes").eq("user_id", userId).eq("billing_period", billingPeriod)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (followError || usageResult.error) throw new Error("Could not load entitlement usage");
+  return {
+    followCount: followCount ?? 0,
+    generationMinutesUsed: (usageResult.data ?? []).reduce((sum, row) => sum + Number(row.charged_minutes ?? 0), 0),
+  };
+}
+
+export async function applyPolarEntitlementEvent(input: {
+  eventId: string; userId: string; action: "active" | "past_due" | "canceled" | "none";
+  subscriptionId: string; customerId: string; periodStart: string | null; periodEnd: string | null; eventAt: string;
+  followLimit: number; generationMinutesLimit: number;
+}) {
+  const { data, error } = await admin().rpc("apply_polar_entitlement_event", {
+    target_event_id: input.eventId,
+    target_user_id: input.userId,
+    target_action: input.action,
+    target_subscription_id: input.subscriptionId,
+    target_customer_id: input.customerId,
+    target_period_start: input.periodStart,
+    target_period_end: input.periodEnd,
+    target_event_at: input.eventAt,
+    target_follow_limit: input.followLimit,
+    target_generation_minutes_limit: input.generationMinutesLimit,
+  });
+  if (error || !["applied", "duplicate", "stale"].includes(data)) throw new Error("Could not update entitlement");
+  return data as "applied" | "duplicate" | "stale";
+}
+
 /** Read one bounded, user-scoped page. This query never invokes a provider. */
 export async function listFeedRows(userId: string, query: FeedQuery): Promise<FeedItem[]> {
   const { data, error } = await admin().rpc("read_feed_page", {

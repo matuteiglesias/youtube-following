@@ -7,7 +7,7 @@ const migrationUrl = new URL("../supabase/migrations/202610050001_d1_product_sch
 const d3MigrationUrl = new URL("../supabase/migrations/202610050002_d3_follow_lifecycle.sql", import.meta.url);
 const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql", import.meta.url);
 const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_engine.sql", import.meta.url);
-const d8MigrationUrl = new URL("../supabase/migrations/202610050005_d8_demo_feed.sql", import.meta.url);
+const d7MigrationUrl = new URL("../supabase/migrations/202610050005_d7_billing.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -30,7 +30,7 @@ async function createDatabase() {
   await db.exec(await readFile(d3MigrationUrl, "utf8"));
   await db.exec(await readFile(d4MigrationUrl, "utf8"));
   await db.exec(await readFile(d5MigrationUrl, "utf8"));
-  await db.exec(await readFile(d8MigrationUrl, "utf8"));
+  await db.exec(await readFile(d7MigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -120,33 +120,6 @@ test("D1 migration enforces two-user isolation, anonymous boundaries and protect
     await assert.rejects(asRole(db, "anon", null, () => db.query(`select * from public.${table}`)));
   }
   await assert.rejects(asRole(db, "anon", null, () => db.query("select public.grant_internal_test_entitlement($1)", [a])));
-});
-
-test("D8 public demo query is bounded, cached-only, independent of follows, and service-role-only", async (t) => {
-  const db = await createDatabase();
-  t.after(() => db.close());
-  const channelUid = "youtube-channel:UC0123456789abcdefghijkl";
-  await db.exec(`
-    insert into public.channels (channel_uid, native_channel_id, title, canonical_url)
-      values ('${channelUid}', 'UC0123456789abcdefghijkl', 'Demo Channel', 'https://youtube.com/@demo');
-    insert into public.videos (video_uid, channel_uid, native_video_id, title, canonical_url, published_at, availability, live_status)
-      values ('youtube:abcdefghijk', '${channelUid}', 'abcdefghijk', 'Cached demo video', 'https://youtube.com/watch?v=abcdefghijk', now(), 'public', 'completed'),
-             ('youtube:ZYXWVUTSRQP', '${channelUid}', 'ZYXWVUTSRQP', 'Uncached video', 'https://youtube.com/watch?v=ZYXWVUTSRQP', now() - interval '1 hour', 'public', 'completed'),
-             ('youtube:mnopqrstuvw', '${channelUid}', 'mnopqrstuvw', 'Private video', 'https://youtube.com/watch?v=mnopqrstuvw', now() - interval '2 hours', 'private', 'completed'),
-             ('youtube:12345678901', '${channelUid}', '12345678901', 'Live video', 'https://youtube.com/watch?v=12345678901', now() - interval '3 hours', 'public', 'live');
-    insert into public.summaries (summary_key, video_uid, spec_version, language, state, summary_id, summary_text, key_points, generated_at)
-      values ('demo-summary', 'youtube:abcdefghijk', 'v1', 'en', 'available', 'demo-1', 'Already cached.', '["Useful point"]'::jsonb, now());
-  `);
-
-  const visible = await asRole(db, "service_role", null, () => db.query(
-    "select feed_item from public.read_demo_feed_page($1::text[], 50)", [[channelUid]],
-  ));
-  assert.equal(visible.rows.length, 1);
-  assert.equal(visible.rows[0].feed_item.summary.state, "available");
-  assert.equal(visible.rows[0].feed_item.summary.summary, "Already cached.");
-  await assert.rejects(() => asRole(db, "anon", null, () => db.query(
-    "select * from public.read_demo_feed_page($1::text[], 20)", [[channelUid]],
-  )), /permission denied/);
 });
 
 test("D1 charges only a successful available summary to its winning claimant", async (t) => {
