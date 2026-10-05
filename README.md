@@ -106,6 +106,31 @@ For local QA only, set `ENABLE_INTERNAL_TEST_ENTITLEMENTS=1` and run `node scrip
 
 `npm test` runs two-user and anonymous RLS integration tests by applying the actual migration to PGlite, an embedded PostgreSQL runtime. These tests execute PostgreSQL policies and grants without needing hosted credentials or a Docker daemon. Live Supabase email delivery and callback completion still require a configured project and mailbox; see [D1 acceptance evidence](docs/acceptance/D1.md).
 
+## D2 provider adapters
+
+Server-side provider interfaces and implementations live under `src/lib/providers/`.
+`YouTubeChannelDiscoveryProvider` receives the Data API key in its constructor; call
+it only from server code. It resolves canonical channel metadata through the
+YouTube Data API and treats the public Atom/RSS upload feed as a discovery hint.
+The feed parser returns IDs and publication hints only; it does not create product
+Video rows.
+
+`MediaMonitorVideoArtifactProvider` obtains a short-lived identity token from the
+Cloud Run metadata server for each call. It accepts the Media Monitor service URL,
+Cloud Run audience, and three endpoint paths as constructor configuration. The
+paths are deliberately required: the public `media_monitor` main branch currently
+documents the `youtube_video_sidecar.v1` CLI payload but does not expose an HTTP
+route for ensure/inspect/summary. Do not configure guessed paths. A server-side
+HTTP bridge and its route mapping must be verified before enabling live calls.
+The adapter maps the documented sidecar `video_id`, nested `channel` and
+`metadata`, and `summary` fields to product-owned `Video` and `SummaryView`
+contracts, dropping unrelated fields.
+
+Automated tests use fake providers and stubbed HTTP/token calls. No provider
+credentials were available for live channel or sidecar acceptance during D2, and
+no deployment was performed.
+
+
 ## Development
 
 Agents must follow [AGENTS.md](AGENTS.md) and implement the DAG one node at a time.
