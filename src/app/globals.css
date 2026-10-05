@@ -27,7 +27,8 @@ a {
 }
 
 .shell {
-  width: min(100% - 32px, 860px);
+  width: calc(100% - 32px);
+  max-width: 860px;
   margin-inline: auto;
 }
 
@@ -166,7 +167,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .feed-empty h2 { margin: 0 0 8px; font-size: 1.25rem; }
 .feed-empty p { margin: 0 0 16px; color: #555; line-height: 1.5; }
 .feed-empty__action { display: inline-block; border: 1px solid #171717; border-radius: 6px; background: #171717; color: white; padding: 10px 14px; text-decoration: none; }
-.feed-error { padding: 12px 14px; border-radius: 6px; background: #fff0f0; color: #7a1515; }
+.feed-error { max-width: 100%; padding: 12px 14px; border-radius: 6px; background: #fff0f0; color: #7a1515; line-height: 1.5; overflow-wrap: anywhere; }
 .feed-pagination { display: flex; justify-content: center; padding: 24px 0 8px; }
 
 @media (max-width: 620px) {
