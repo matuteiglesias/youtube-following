@@ -96,6 +96,16 @@ curl http://localhost:8080/api/health
 
 See [docs/deployment/GCP_NAMING.md](docs/deployment/GCP_NAMING.md) for the initial GCP project/resource naming plan.
 
+## D1 authentication and data
+
+Copy `.env.example` to `.env.local` and set the Supabase project URL, public anon/publishable key, server-only service-role key, and `APP_URL`. Configure Supabase Auth's site URL and redirect allow-list to include the exact callback URL `${APP_URL}/auth/callback`. In hosted environments `APP_URL` must use HTTPS. Never prefix the service-role key with `NEXT_PUBLIC_` or expose it to browser code.
+
+The `supabase/` directory includes local CLI configuration. Start a local Supabase stack with `supabase start`, or link a hosted project with `supabase link --project-ref <project-ref>`, then apply migrations with `supabase db push`. New Auth users receive a profile and a zero-limit `none` entitlement through a database trigger. The migration restricts browser database access with RLS and column grants; product mutations use the server-only Supabase adapter.
+
+For local QA only, set `ENABLE_INTERNAL_TEST_ENTITLEMENTS=1` and run `node scripts/grant-internal-test-entitlement.mjs <auth-user-uuid>` with the local Supabase URL and service-role key in the environment. The script refuses production mode, and the corresponding database function is executable only by the service role. Do not use this mechanism for customer entitlements.
+
+`npm test` runs two-user and anonymous RLS integration tests by applying the actual migration to PGlite, an embedded PostgreSQL runtime. These tests execute PostgreSQL policies and grants without needing hosted credentials or a Docker daemon. Live Supabase email delivery and callback completion still require a configured project and mailbox; see [D1 acceptance evidence](docs/acceptance/D1.md).
+
 ## Development
 
 Agents must follow [AGENTS.md](AGENTS.md) and implement the DAG one node at a time.

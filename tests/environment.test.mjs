@@ -5,7 +5,7 @@ import { validateEnvironment } from "../scripts/validate-env.mjs";
 
 test("environment validation accepts Cloud Run-style runtime values", () => {
   assert.deepEqual(
-    validateEnvironment({ NODE_ENV: "production", PORT: "8080" }),
+    validateEnvironment({ NODE_ENV: "production", PORT: "8080", APP_URL: "https://following.example", NEXT_PUBLIC_SUPABASE_URL: "https://project.supabase.co", NEXT_PUBLIC_SUPABASE_ANON_KEY: "public", SUPABASE_SERVICE_ROLE_KEY: "server" }),
     { nodeEnv: "production", port: 8080 },
   );
 });
@@ -22,4 +22,9 @@ test("environment validation rejects an unexpected NODE_ENV", () => {
     () => validateEnvironment({ NODE_ENV: "preview", PORT: "8080" }),
     /NODE_ENV must be development, test, or production/,
   );
+});
+
+test("production environment validation requires server auth and database configuration", () => {
+  assert.throws(() => validateEnvironment({ NODE_ENV: "production" }), /SUPABASE_SERVICE_ROLE_KEY is required in production/);
+  assert.throws(() => validateEnvironment({ NODE_ENV: "production", APP_URL: "http://example.test", NEXT_PUBLIC_SUPABASE_URL: "x", NEXT_PUBLIC_SUPABASE_ANON_KEY: "x", SUPABASE_SERVICE_ROLE_KEY: "x" }), /APP_URL must use HTTPS/);
 });
