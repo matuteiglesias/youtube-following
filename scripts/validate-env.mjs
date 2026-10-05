@@ -14,6 +14,20 @@ export function validateEnvironment(env = process.env) {
     }
   }
 
+  if (env.NODE_ENV === "production") {
+    for (const name of ["APP_URL", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) {
+      if (!env[name]) errors.push(`${name} is required in production`);
+    }
+    if (env.APP_URL) {
+      try {
+        const appUrl = new URL(env.APP_URL);
+        if (appUrl.protocol !== "https:") errors.push("APP_URL must use HTTPS in production");
+      } catch {
+        errors.push("APP_URL must be an absolute HTTPS URL in production");
+      }
+    }
+  }
+
   if (errors.length > 0) {
     throw new Error(`Invalid environment: ${errors.join("; ")}`);
   }
