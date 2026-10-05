@@ -53,6 +53,19 @@ nav a {
   text-underline-offset: 4px;
 }
 
+.demo-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 28px; padding: 14px 16px; border: 1px solid #d9e1ef; border-radius: 10px; background: #f6f8fc; }
+.demo-banner > div { display: grid; gap: 3px; }
+.demo-banner span { color: #555; font-size: .9rem; }
+.demo-banner a { font-weight: 700; text-underline-offset: 3px; }
+.loading-state { min-height: 32vh; display: grid; place-items: center; color: #555; }
+.account-plan { max-width: 680px; margin-inline: auto; }
+.account-plan h1 { margin: 0 0 24px; font-size: clamp(2rem, 7vw, 3rem); }
+.entitlement-card, .pricing-card { border: 1px solid #dedede; border-radius: 12px; padding: 20px; margin-top: 16px; }
+.entitlement-card h2, .pricing-card h2 { margin: 0 0 12px; font-size: 1.2rem; }
+.entitlement-card p { margin: 8px 0 0; color: #444; }
+.pricing-card { background: #f8f8f8; }
+.pricing-card p { max-width: 60ch; line-height: 1.55; }
+
 .page {
   padding-block: 48px;
 }
@@ -178,6 +191,12 @@ button:disabled { cursor: wait; opacity: .55; }
   .page {
     padding-block: 28px;
   }
+
+  .demo-banner { align-items: stretch; flex-direction: column; }
+
+  .demo-banner a { align-self: flex-start; }
+
+  .entitlement-card, .pricing-card { padding: 16px; }
 
   .placeholder {
     padding: 20px;

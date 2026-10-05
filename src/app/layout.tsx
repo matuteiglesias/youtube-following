@@ -23,6 +23,8 @@ export default function RootLayout({
             <nav aria-label="Primary">
               <Link href="/">Feed</Link>
               <Link href="/following">Following</Link>
+              <Link href="/account">Account</Link>
+              <Link href="/demo">Demo</Link>
             </nav>
           </div>
         </header>

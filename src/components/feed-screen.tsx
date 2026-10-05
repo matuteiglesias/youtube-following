@@ -14,6 +14,7 @@ type Props = {
   selectedChannelUid: string | null;
   initialError: boolean;
   filterUnavailable: boolean;
+  demo?: boolean;
 };
 
 function durationLabel(seconds: number | null): string | null {
@@ -42,6 +43,15 @@ function availabilityLabel(value: FeedItem["video"]["availability"]): string | n
   if (value === "private") return "Private video";
   if (value === "unavailable") return "Video unavailable";
   return "Availability unknown";
+}
+
+export function mayAutoRequestSummary(demo: boolean, item: FeedItem): boolean {
+  return !demo
+    && item.summary.state === "not_requested"
+    && item.video.live_status !== "live"
+    && item.video.live_status !== "upcoming"
+    && item.video.availability === "public"
+    && (item.video.duration_seconds === null || item.video.duration_seconds >= 90 && item.video.duration_seconds <= 7200);
 }
 
 function FeedCard({ item, onRetry }: { item: FeedItem; onRetry: (videoUid: string) => void }) {
@@ -79,7 +89,7 @@ function FeedCard({ item, onRetry }: { item: FeedItem; onRetry: (videoUid: strin
   </article>;
 }
 
-export function FeedScreen({ initialPage, channels, selectedChannelUid, initialError, filterUnavailable }: Props) {
+export function FeedScreen({ initialPage, channels, selectedChannelUid, initialError, filterUnavailable, demo = false }: Props) {
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.next_cursor);
   const [error, setError] = useState(initialError
@@ -108,21 +118,20 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
   }
 
   useEffect(() => {
-    const candidates = items.filter((item) => item.summary.state === "not_requested");
+    if (demo) return;
+    const candidates = items.filter((item) => mayAutoRequestSummary(demo, item));
     let scheduled = 0;
     for (const item of candidates) {
       if (scheduled >= 2) break;
       const uid = item.video.video_uid;
       if (activeSummaryRequests.current.has(uid)) continue;
-      if (item.video.live_status === "live"
-        || item.video.live_status === "upcoming" || item.video.availability !== "public"
-        || item.video.duration_seconds !== null && (item.video.duration_seconds < 90 || item.video.duration_seconds > 7200)) continue;
       scheduled += 1;
       window.setTimeout(() => { void requestSummary(uid); }, 0);
     }
-  }, [items]);
+  }, [demo, items]);
 
   useEffect(() => {
+    if (demo) return;
     const generating = items.filter((item) => item.summary.state === "generating");
     if (generating.length === 0) return;
     const poll = window.setInterval(() => {
@@ -132,7 +141,7 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
       }
     }, 4000);
     return () => window.clearInterval(poll);
-  }, [items]);
+  }, [demo, items]);
 
   async function loadMore() {
     if (!nextCursor || loading) return;
@@ -166,14 +175,14 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
   return <section className="feed-screen" aria-labelledby="feed-heading">
     <div className="feed-heading-row">
       <div><p className="placeholder__label">Feed</p><h1 id="feed-heading">Following</h1></div>
-      <form className="feed-filter" method="get" action="/">
+      {!demo ? <form className="feed-filter" method="get" action="/">
         <label htmlFor="feed-channel-filter">Show</label>
         <select id="feed-channel-filter" name="channel_uid" defaultValue={selectedChannelUid ?? ""}>
           <option value="">All channels</option>
           {channels.map((channel) => <option key={channel.channel_uid} value={channel.channel_uid}>{channel.title}</option>)}
         </select>
         <button type="submit">Filter</button>
-      </form>
+      </form> : null}
     </div>
 
     {error ? <p role="alert" className="feed-error">{error}</p> : null}
@@ -184,7 +193,14 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
         ? <div className="feed-empty">
           <h2>{filterUnavailable ? error : "We couldn’t load your feed."}</h2>
           <p>{filterUnavailable ? "Choose one of your followed channels or clear the filter." : "Please try again shortly."}</p>
+          {initialError ? <button type="button" onClick={() => window.location.reload()}>Try again</button> : null}
           {filterUnavailable ? <Link href="/">View all channels</Link> : null}
+        </div>
+        : demo
+        ? <div className="feed-empty">
+          <h2>No demo videos are available yet.</h2>
+          <p>Check back later, or sign in to build a feed from the channels you choose.</p>
+          <Link href="/login">Sign in</Link>
         </div>
         : channels.length === 0
         ? <div className="feed-empty">
@@ -198,7 +214,7 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
           {selectedChannelUid ? <Link href="/">View all channels</Link> : null}
         </div>}
 
-    {nextCursor ? <div className="feed-pagination">
+    {!demo && nextCursor ? <div className="feed-pagination">
       <button type="button" onClick={loadMore} disabled={loading}>{loading ? "Loading…" : error ? "Try again" : "Load more"}</button>
     </div> : null}
   </section>;
