@@ -327,8 +327,11 @@ One channel failure does not abort unrelated channels.
 Application code depends on interfaces, not vendor-specific calls.
 
 ```ts
-interface ChannelDiscoveryProvider {
+interface ChannelResolver {
   resolve(reference: string): Promise<ResolvedChannel>
+}
+
+interface UploadFrontierProvider {
   listRecentUploads(
     channel: ResolvedChannel,
     limit: number
