@@ -1,22 +1,25 @@
-import type { ChannelDiscoveryProvider, ResolvedChannel, UploadHint } from "./contracts.ts";
+import type { ChannelResolver, ResolvedChannel, UploadFrontierProvider, UploadHint } from "./contracts.ts";
 
-export class FakeChannelDiscoveryProvider implements ChannelDiscoveryProvider {
+export class FakeChannelResolver implements ChannelResolver {
   private readonly channel: ResolvedChannel;
-  private readonly uploads: UploadHint[];
   readonly resolved: string[] = [];
-  readonly listed: Array<{ channel: ResolvedChannel; limit: number }> = [];
 
-  constructor(
-    channel: ResolvedChannel,
-    uploads: UploadHint[] = [],
-  ) {
+  constructor(channel: ResolvedChannel) {
     this.channel = channel;
-    this.uploads = uploads;
   }
 
   async resolve(reference: string): Promise<ResolvedChannel> {
     this.resolved.push(reference);
     return this.channel;
+  }
+}
+
+export class FakeUploadFrontierProvider implements UploadFrontierProvider {
+  private readonly uploads: UploadHint[];
+  readonly listed: Array<{ channel: ResolvedChannel; limit: number }> = [];
+
+  constructor(uploads: UploadHint[] = []) {
+    this.uploads = uploads;
   }
 
   async listRecentUploads(channel: ResolvedChannel, limit: number): Promise<UploadHint[]> {
