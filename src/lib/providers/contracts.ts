@@ -60,8 +60,11 @@ export type ProviderSummaryResult = {
   model: string | null;
 };
 
-export interface ChannelDiscoveryProvider {
+export interface ChannelResolver {
   resolve(reference: string): Promise<ResolvedChannel>;
+}
+
+export interface UploadFrontierProvider {
   listRecentUploads(channel: ResolvedChannel, limit: number): Promise<UploadHint[]>;
 }
 
@@ -71,12 +74,31 @@ export interface VideoArtifactProvider {
   ensureSummary(videoUid: string): Promise<ProviderSummaryResult>;
 }
 
+export type ProviderDiagnosticCode =
+  | "youtube_configuration_missing"
+  | "youtube_auth_invalid"
+  | "youtube_api_disabled"
+  | "youtube_key_restricted"
+  | "youtube_quota"
+  | "youtube_rate_limited"
+  | "youtube_upstream_5xx"
+  | "youtube_timeout"
+  | "youtube_invalid_response";
+
 export class ProviderError extends Error {
   readonly code: "invalid_reference" | "not_found" | "unavailable" | "invalid_response";
+  readonly diagnosticCode: ProviderDiagnosticCode | null;
+  readonly upstreamStatus: number | null;
 
-  constructor(code: ProviderError["code"], message: string) {
+  constructor(
+    code: ProviderError["code"],
+    message: string,
+    diagnostics: { diagnosticCode?: ProviderDiagnosticCode; upstreamStatus?: number } = {},
+  ) {
     super(message);
     this.name = "ProviderError";
     this.code = code;
+    this.diagnosticCode = diagnostics.diagnosticCode ?? null;
+    this.upstreamStatus = diagnostics.upstreamStatus ?? null;
   }
 }
