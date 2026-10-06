@@ -4,11 +4,7 @@ const GOOGLE_ISSUERS = new Set(["accounts.google.com", "https://accounts.google.
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const MAX_CLOCK_SKEW_SECONDS = 300;
 
-type Jwk = JsonWebKey & {
-  kid?: string;
-  alg?: string;
-  use?: string;
-};
+type Jwk = Record<string, string>;
 
 type JwtHeader = {
   alg?: string;
