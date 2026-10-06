@@ -1,4 +1,11 @@
-import { ProviderError, type ChannelDiscoveryProvider, type ResolvedChannel, type UploadHint } from "./contracts.ts";
+import {
+  ProviderError,
+  type ChannelResolver,
+  type ProviderDiagnosticCode,
+  type ResolvedChannel,
+  type UploadFrontierProvider,
+  type UploadHint,
+} from "./contracts.ts";
 
 const YOUTUBE_API = "https://www.googleapis.com/youtube/v3/channels";
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com"]);
@@ -16,6 +23,13 @@ type YouTubeChannelResponse = {
 };
 
 type YouTubeThumbnails = NonNullable<NonNullable<YouTubeChannelResponse["items"]>[number]["snippet"]>["thumbnails"];
+
+type GoogleErrorPayload = {
+  error?: {
+    errors?: Array<{ reason?: unknown }>;
+    details?: Array<{ reason?: unknown }>;
+  };
+};
 
 function canonicalReference(reference: string): { kind: "id" | "handle"; value: string } {
   const input = reference.trim();
@@ -59,7 +73,7 @@ function normalizeHandle(value: string | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   const withoutAt = trimmed.replace(/^@/, "");
-  return /^[A-Za-z0-9._-]{1,100}$/.test(withoutAt) ? `@${withoutAt}` : null;
+  return /^[A-Za-z0-9._-]{1,100}$/.test(withoutAt) ? "@" + withoutAt : null;
 }
 
 function decodeXml(value: string): string {
@@ -74,7 +88,10 @@ async function readBoundedText(response: Response): Promise<string> {
   if (!reader) {
     const text = await response.text();
     if (new TextEncoder().encode(text).byteLength > MAX_FEED_BYTES) {
-      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed");
+      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed", {
+        diagnosticCode: "youtube_invalid_response",
+        upstreamStatus: response.status,
+      });
     }
     return text;
   }
@@ -88,7 +105,10 @@ async function readBoundedText(response: Response): Promise<string> {
       bytes += value.byteLength;
       if (bytes > MAX_FEED_BYTES) {
         await reader.cancel();
-        throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed");
+        throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed", {
+          diagnosticCode: "youtube_invalid_response",
+          upstreamStatus: response.status,
+        });
       }
       text += decoder.decode(value, { stream: true });
     }
@@ -99,8 +119,11 @@ async function readBoundedText(response: Response): Promise<string> {
 }
 
 function xmlTag(block: string, localName: string): string | null {
-  const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = block.match(new RegExp(`<(?:(?:[A-Za-z0-9_-]+):)?${escaped}\\b[^>]*>([\\s\\S]*?)<\\/(?:(?:[A-Za-z0-9_-]+):)?${escaped}\\s*>`, "i"));
+  const escaped = localName.replace(/[^A-Za-z0-9_-]/g, "\\$&");
+  const pattern = "<(?:(?:[A-Za-z0-9_-]+):)?" + escaped
+    + "\\b[^>]*>([\\s\\S]*?)<\\/(?:(?:[A-Za-z0-9_-]+):)?"
+    + escaped + "\\s*>";
+  const match = block.match(new RegExp(pattern, "i"));
   return match ? decodeXml(match[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").trim()) : null;
 }
 
@@ -125,24 +148,71 @@ export function parseYouTubeUploadFeed(xml: string, limit: number): UploadHint[]
       native_video_id: videoId,
       published_at: date.toISOString(),
       title,
-      url: `https://www.youtube.com/watch?v=${videoId}`,
+      url: "https://www.youtube.com/watch?v=" + videoId,
     });
     if (results.length === safeLimit) break;
   }
   return results;
 }
 
-export class YouTubeChannelDiscoveryProvider implements ChannelDiscoveryProvider {
+function collectErrorReasons(payload: unknown): Set<string> {
+  const reasons = new Set<string>();
+  if (!payload || typeof payload !== "object") return reasons;
+  const error = (payload as GoogleErrorPayload).error;
+  for (const entry of error?.errors ?? []) if (typeof entry?.reason === "string") reasons.add(entry.reason);
+  for (const entry of error?.details ?? []) if (typeof entry?.reason === "string") reasons.add(entry.reason);
+  return reasons;
+}
+
+function diagnosticFromFailure(status: number, reasons: Set<string>): ProviderDiagnosticCode | null {
+  if (status === 429 || reasons.has("rateLimitExceeded") || reasons.has("userRateLimitExceeded") || reasons.has("RATE_LIMIT_EXCEEDED")) {
+    return "youtube_rate_limited";
+  }
+  if (reasons.has("quotaExceeded") || reasons.has("dailyLimitExceeded") || reasons.has("dailyLimitExceededUnreg") || reasons.has("QUOTA_EXCEEDED")) {
+    return "youtube_quota";
+  }
+  if (reasons.has("API_KEY_INVALID") || reasons.has("keyInvalid")) return "youtube_auth_invalid";
+  if (reasons.has("SERVICE_DISABLED") || reasons.has("accessNotConfigured")) return "youtube_api_disabled";
+  if ([
+    "API_KEY_SERVICE_BLOCKED",
+    "API_KEY_HTTP_REFERRER_BLOCKED",
+    "API_KEY_IP_ADDRESS_BLOCKED",
+    "API_KEY_ANDROID_APP_BLOCKED",
+    "API_KEY_IOS_APP_BLOCKED",
+  ].some((reason) => reasons.has(reason))) return "youtube_key_restricted";
+  if (status >= 500) return "youtube_upstream_5xx";
+  return null;
+}
+
+async function dataApiFailure(response: Response): Promise<ProviderError> {
+  let payload: unknown = null;
+  try { payload = await response.json(); } catch { /* Classification is optional when the body is not JSON. */ }
+  const reasons = collectErrorReasons(payload);
+  if (response.status === 404 || reasons.has("channelNotFound")) {
+    return new ProviderError("not_found", "YouTube channel not found", { upstreamStatus: response.status });
+  }
+  const diagnosticCode = diagnosticFromFailure(response.status, reasons);
+  return new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+    ...(diagnosticCode ? { diagnosticCode } : {}),
+    upstreamStatus: response.status,
+  });
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+export class YouTubeDataApiChannelResolver implements ChannelResolver {
   private readonly apiKey: string;
   private readonly fetcher: FetchLike;
   private readonly timeoutMs: number;
 
-  constructor(
-    apiKey: string,
-    fetcher: FetchLike = fetch,
-    timeoutMs = REQUEST_TIMEOUT_MS,
-  ) {
-    if (!apiKey.trim()) throw new Error("YouTube Data API key is required");
+  constructor(apiKey: string, fetcher: FetchLike = fetch, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (!apiKey.trim()) {
+      throw new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+        diagnosticCode: "youtube_configuration_missing",
+      });
+    }
     this.apiKey = apiKey;
     this.fetcher = fetcher;
     this.timeoutMs = timeoutMs;
@@ -156,19 +226,58 @@ export class YouTubeChannelDiscoveryProvider implements ChannelDiscoveryProvider
     url.searchParams.set(parsed.kind === "id" ? "id" : "forHandle", parsed.value);
     const payload = await this.requestJson<YouTubeChannelResponse>(url);
     const item = payload.items?.[0];
-    if (!item?.id || !/^UC[A-Za-z0-9_-]{22}$/.test(item.id) || !item.snippet?.title?.trim()) {
-      throw new ProviderError("not_found", "YouTube channel not found");
+    if (!item) throw new ProviderError("not_found", "YouTube channel not found");
+    if (!item.id || !/^UC[A-Za-z0-9_-]{22}$/.test(item.id) || !item.snippet?.title?.trim()) {
+      throw new ProviderError("invalid_response", "YouTube returned an invalid response", {
+        diagnosticCode: "youtube_invalid_response",
+      });
     }
     const handle = normalizeHandle(item.snippet.customUrl);
     return {
-      channel_uid: `youtube-channel:${item.id}`,
+      channel_uid: "youtube-channel:" + item.id,
       platform: "youtube",
       native_channel_id: item.id,
       handle,
       title: item.snippet.title.trim(),
-      canonical_url: handle ? `https://www.youtube.com/${handle}` : `https://www.youtube.com/channel/${item.id}`,
+      canonical_url: handle ? "https://www.youtube.com/" + handle : "https://www.youtube.com/channel/" + item.id,
       thumbnail_url: firstThumbnail(item.snippet.thumbnails),
     };
+  }
+
+  private async requestJson<T>(url: URL): Promise<T> {
+    const response = await this.fetchWithTimeout(url);
+    if (!response.ok) throw await dataApiFailure(response);
+    try { return await response.json() as T; }
+    catch {
+      throw new ProviderError("invalid_response", "YouTube returned an invalid response", {
+        diagnosticCode: "youtube_invalid_response",
+        upstreamStatus: response.status,
+      });
+    }
+  }
+
+  private async fetchWithTimeout(input: string | URL): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try { return await this.fetcher(input, { signal: controller.signal }); }
+    catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        throw new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+          diagnosticCode: "youtube_timeout",
+        });
+      }
+      throw new ProviderError("unavailable", "YouTube is temporarily unavailable");
+    } finally { clearTimeout(timeout); }
+  }
+}
+
+export class YouTubeAtomUploadFrontier implements UploadFrontierProvider {
+  private readonly fetcher: FetchLike;
+  private readonly timeoutMs: number;
+
+  constructor(fetcher: FetchLike = fetch, timeoutMs = REQUEST_TIMEOUT_MS) {
+    this.fetcher = fetcher;
+    this.timeoutMs = timeoutMs;
   }
 
   async listRecentUploads(channel: ResolvedChannel, limit: number): Promise<UploadHint[]> {
@@ -176,32 +285,43 @@ export class YouTubeChannelDiscoveryProvider implements ChannelDiscoveryProvider
       throw new ProviderError("invalid_reference", "Invalid canonical YouTube channel");
     }
     if (!Number.isInteger(limit) || limit < 0) throw new RangeError("limit must be a non-negative integer");
-    const response = await this.fetchWithTimeout(`https://www.youtube.com/feeds/videos.xml?channel_id=${channel.native_channel_id}`);
-    if (!response.ok) throw new ProviderError("unavailable", "YouTube uploads are temporarily unavailable");
+    const response = await this.fetchWithTimeout("https://www.youtube.com/feeds/videos.xml?channel_id=" + channel.native_channel_id);
+    if (!response.ok) {
+      const diagnosticCode = response.status === 429 ? "youtube_rate_limited"
+        : response.status >= 500 ? "youtube_upstream_5xx" : undefined;
+      throw new ProviderError("unavailable", "YouTube uploads are temporarily unavailable", {
+        ...(diagnosticCode ? { diagnosticCode } : {}),
+        upstreamStatus: response.status,
+      });
+    }
     const declaredSize = Number(response.headers.get("content-length"));
     if (Number.isFinite(declaredSize) && declaredSize > MAX_FEED_BYTES) {
-      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed");
+      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed", {
+        diagnosticCode: "youtube_invalid_response",
+        upstreamStatus: response.status,
+      });
     }
     const xml = await readBoundedText(response);
     if (!/<(?:[\w-]+:)?(?:feed|rss)\b/i.test(xml)) {
-      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed");
+      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads feed", {
+        diagnosticCode: "youtube_invalid_response",
+        upstreamStatus: response.status,
+      });
     }
     return parseYouTubeUploadFeed(xml, Math.min(limit, MAX_FEED_LIMIT));
-  }
-
-  private async requestJson<T>(url: URL): Promise<T> {
-    const response = await this.fetchWithTimeout(url);
-    if (response.status === 404) throw new ProviderError("not_found", "YouTube channel not found");
-    if (!response.ok) throw new ProviderError("unavailable", "YouTube is temporarily unavailable");
-    try { return await response.json() as T; }
-    catch { throw new ProviderError("invalid_response", "YouTube returned an invalid response"); }
   }
 
   private async fetchWithTimeout(input: string | URL): Promise<Response> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try { return await this.fetcher(input, { signal: controller.signal }); }
-    catch { throw new ProviderError("unavailable", "YouTube is temporarily unavailable"); }
-    finally { clearTimeout(timeout); }
+    catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        throw new ProviderError("unavailable", "YouTube uploads are temporarily unavailable", {
+          diagnosticCode: "youtube_timeout",
+        });
+      }
+      throw new ProviderError("unavailable", "YouTube uploads are temporarily unavailable");
+    } finally { clearTimeout(timeout); }
   }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FakeChannelDiscoveryProvider } from "../src/lib/providers/fakes.ts";
+import { FakeChannelResolver, FakeUploadFrontierProvider } from "../src/lib/providers/fakes.ts";
 import { ProviderError } from "../src/lib/providers/contracts.ts";
 import { FollowLifecycleError, followChannel, resolveChannel, unfollowChannel } from "../src/lib/follow-lifecycle.ts";
 
@@ -68,8 +68,8 @@ function uploads(count) {
 
 test("resolve returns the canonical preview and never creates a Follow", async () => {
   const repo = repository();
-  const discovery = new FakeChannelDiscoveryProvider(channel);
-  const result = await resolveChannel("@sample", "user-a", discovery, repo);
+  const resolver = new FakeChannelResolver(channel);
+  const result = await resolveChannel("@sample", "user-a", resolver, repo);
   assert.equal(result.channel.title, "Sample Channel");
   assert.equal(result.channel.handle, "@sample");
   assert.equal(result.already_followed, false);
@@ -79,18 +79,39 @@ test("resolve returns the canonical preview and never creates a Follow", async (
 test("resolve maps invalid, missing, and unavailable channels to safe product errors", async () => {
   const repo = repository();
   for (const [code, productCode] of [["invalid_reference", "invalid_channel"], ["not_found", "channel_not_resolved"], ["unavailable", "provider_unavailable"]]) {
-    const discovery = { resolve: async () => { throw new ProviderError(code, "raw upstream detail"); } };
-    await assert.rejects(resolveChannel("bad", "user-a", discovery, repo), (error) => error instanceof FollowLifecycleError && error.code === productCode && !error.message.includes("raw"));
+    const resolver = { resolve: async () => { throw new ProviderError(code, "raw upstream detail"); } };
+    await assert.rejects(resolveChannel("bad", "user-a", resolver, repo), (error) => error instanceof FollowLifecycleError && error.code === productCode && !error.message.includes("raw"));
   }
+});
+
+test("resolver diagnostics survive lifecycle mapping while user copy stays bounded", async () => {
+  const repo = repository();
+  const resolver = {
+    resolve: async () => {
+      throw new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+        diagnosticCode: "youtube_key_restricted",
+        upstreamStatus: 403,
+      });
+    },
+  };
+  await assert.rejects(resolveChannel("@sample", "user-a", resolver, repo), (error) => {
+    assert.ok(error instanceof FollowLifecycleError);
+    assert.equal(error.code, "provider_unavailable");
+    assert.equal(error.providerDiagnosticCode, "youtube_key_restricted");
+    assert.equal(error.providerStatus, 403);
+    assert.equal(error.message, "YouTube is temporarily unavailable. Try again shortly.");
+    assert.doesNotMatch(error.message, /restricted|403/i);
+    return true;
+  });
 });
 
 test("first follow backfills at most ten canonical videos and never summaries", async () => {
   const repo = repository();
-  const discovery = new FakeChannelDiscoveryProvider(channel, uploads(12));
+  const frontier = new FakeUploadFrontierProvider(uploads(12));
   const artifacts = artifactsFor();
-  const result = await followChannel("user-a", channel.channel_uid, () => discovery, () => artifacts, repo);
+  const result = await followChannel("user-a", channel.channel_uid, () => frontier, () => artifacts, repo);
   assert.equal(result.backfill, "complete");
-  assert.equal(discovery.listed[0].limit, 10);
+  assert.equal(frontier.listed[0].limit, 10);
   assert.equal(artifacts.ensured.length, 10);
   assert.equal(repo.calls.upsertedVideos.length, 10);
   assert.deepEqual(artifacts.summarized, []);
@@ -98,11 +119,11 @@ test("first follow backfills at most ten canonical videos and never summaries", 
 
 test("a second user reuses the global channel and fresh frontier", async () => {
   const repo = repository();
-  const discovery = new FakeChannelDiscoveryProvider(channel, uploads(2));
+  const frontier = new FakeUploadFrontierProvider(uploads(2));
   const artifacts = artifactsFor();
-  await followChannel("user-a", channel.channel_uid, () => discovery, () => artifacts, repo);
+  await followChannel("user-a", channel.channel_uid, () => frontier, () => artifacts, repo);
   const before = artifacts.ensured.length;
-  const second = await followChannel("user-b", channel.channel_uid, () => discovery, () => artifacts, repo);
+  const second = await followChannel("user-b", channel.channel_uid, () => frontier, () => artifacts, repo);
   assert.equal(second.backfill, "not_needed");
   assert.equal(repo.channels.size, 1);
   assert.equal(repo.follows.size, 2);
@@ -111,19 +132,19 @@ test("a second user reuses the global channel and fresh frontier", async () => {
 
 test("limit rejection creates no relationship and makes no provider calls", async () => {
   const repo = repository(0);
-  const discovery = new FakeChannelDiscoveryProvider(channel, uploads(2));
+  const frontier = new FakeUploadFrontierProvider(uploads(2));
   const artifacts = artifactsFor();
   await assert.rejects(followChannel("user-a", channel.channel_uid, () => { throw new Error("provider construction must not run"); }, () => { throw new Error("provider construction must not run"); }, repo), (error) => error instanceof FollowLifecycleError && error.code === "follow_limit_reached");
-  assert.equal(discovery.listed.length, 0);
+  assert.equal(frontier.listed.length, 0);
   assert.equal(artifacts.ensured.length, 0);
   assert.equal(repo.follows.get("user-a")?.size ?? 0, 0);
 });
 
 test("partial backfill remains a successful follow with bounded product state", async () => {
   const repo = repository();
-  const discovery = new FakeChannelDiscoveryProvider(channel);
-  discovery.listRecentUploads = async () => { throw new Error("private upstream detail"); };
-  const result = await followChannel("user-a", channel.channel_uid, () => discovery, artifactsFor, repo);
+  const frontier = new FakeUploadFrontierProvider();
+  frontier.listRecentUploads = async () => { throw new Error("private upstream detail"); };
+  const result = await followChannel("user-a", channel.channel_uid, () => frontier, artifactsFor, repo);
   assert.equal(result.backfill, "partial");
   assert.ok(repo.follows.get("user-a").has(channel.channel_uid));
   assert.equal(repo.calls.checked[0].status, "error");
@@ -131,13 +152,13 @@ test("partial backfill remains a successful follow with bounded product state", 
 
 test("unfollow removes only the authenticated user's relationship and supports Undo", async () => {
   const repo = repository();
-  const discovery = new FakeChannelDiscoveryProvider(channel, []);
-  await followChannel("user-a", channel.channel_uid, () => discovery, artifactsFor, repo);
-  await followChannel("user-b", channel.channel_uid, () => discovery, artifactsFor, repo);
+  const frontier = new FakeUploadFrontierProvider([]);
+  await followChannel("user-a", channel.channel_uid, () => frontier, artifactsFor, repo);
+  await followChannel("user-b", channel.channel_uid, () => frontier, artifactsFor, repo);
   await unfollowChannel("user-a", channel.channel_uid, repo);
   assert.equal(repo.follows.get("user-a").has(channel.channel_uid), false);
   assert.equal(repo.follows.get("user-b").has(channel.channel_uid), true);
-  const restored = await followChannel("user-a", channel.channel_uid, () => discovery, artifactsFor, repo);
+  const restored = await followChannel("user-a", channel.channel_uid, () => frontier, artifactsFor, repo);
   assert.equal(restored.backfill, "not_needed");
   assert.equal(repo.channels.size, 1);
 });

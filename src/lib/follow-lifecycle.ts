@@ -1,4 +1,4 @@
-import type { ChannelDiscoveryProvider, ResolvedChannel, Video, VideoArtifactProvider } from "./providers/contracts.ts";
+import { ProviderError, type ChannelResolver, type ProviderDiagnosticCode, type ResolvedChannel, type UploadFrontierProvider, type Video, type VideoArtifactProvider } from "./providers/contracts.ts";
 import type { ChannelRecord, FollowRecord } from "./db.ts";
 
 export const INITIAL_BACKFILL_LIMIT = 10;
@@ -19,11 +19,19 @@ export type FollowRepository = {
 
 export class FollowLifecycleError extends Error {
   readonly code: "channel_not_resolved" | "follow_limit_reached" | "provider_unavailable" | "invalid_channel";
+  readonly providerDiagnosticCode: ProviderDiagnosticCode | null;
+  readonly providerStatus: number | null;
 
-  constructor(code: FollowLifecycleError["code"], message: string) {
+  constructor(
+    code: FollowLifecycleError["code"],
+    message: string,
+    providerDiagnostics: { diagnosticCode?: ProviderDiagnosticCode | null; upstreamStatus?: number | null } = {},
+  ) {
     super(message);
     this.name = "FollowLifecycleError";
     this.code = code;
+    this.providerDiagnosticCode = providerDiagnostics.diagnosticCode ?? null;
+    this.providerStatus = providerDiagnostics.upstreamStatus ?? null;
   }
 }
 
@@ -37,19 +45,25 @@ function isStale(channel: ChannelRecord): boolean {
   return !Number.isFinite(nextCheck) || nextCheck <= Date.now();
 }
 
-function safeProviderError(): FollowLifecycleError {
-  return new FollowLifecycleError("provider_unavailable", "YouTube is temporarily unavailable. Try again shortly.");
+function safeProviderError(error?: unknown): FollowLifecycleError {
+  return new FollowLifecycleError(
+    "provider_unavailable",
+    "YouTube is temporarily unavailable. Try again shortly.",
+    error instanceof ProviderError
+      ? { diagnosticCode: error.diagnosticCode, upstreamStatus: error.upstreamStatus }
+      : {},
+  );
 }
 
 export async function resolveChannel(
   reference: string,
   userId: string,
-  discovery: ChannelDiscoveryProvider,
+  resolver: ChannelResolver,
   repository: FollowRepository,
 ): Promise<{ channel: ResolvedChannel; already_followed: boolean }> {
   let channel: ResolvedChannel;
   try {
-    channel = await discovery.resolve(reference);
+    channel = await resolver.resolve(reference);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "invalid_reference") {
       throw new FollowLifecycleError("invalid_channel", "That doesn't look like a YouTube channel.");
@@ -57,7 +71,7 @@ export async function resolveChannel(
     if (error instanceof Error && "code" in error && error.code === "not_found") {
       throw new FollowLifecycleError("channel_not_resolved", "We couldn't find that channel.");
     }
-    throw safeProviderError();
+    throw safeProviderError(error);
   }
   await repository.upsertChannel(channel);
   const follows = await repository.getMyFollowChannelUids(userId);
@@ -67,7 +81,7 @@ export async function resolveChannel(
 export async function followChannel(
   userId: string,
   channelUid: string,
-  discoveryFactory: () => ChannelDiscoveryProvider,
+  frontierFactory: () => UploadFrontierProvider,
   artifactsFactory: () => VideoArtifactProvider,
   repository: FollowRepository,
 ): Promise<{ follow: FollowRecord & { created: boolean }; backfill: BackfillStatus }> {
@@ -89,11 +103,11 @@ export async function followChannel(
     return { follow: mutation, backfill: "not_needed" };
   }
 
-  const discovery = discoveryFactory();
+  const frontier = frontierFactory();
   const artifacts = artifactsFactory();
   let partial = false;
   try {
-    const hints = await discovery.listRecentUploads(channel, INITIAL_BACKFILL_LIMIT);
+    const hints = await frontier.listRecentUploads(channel, INITIAL_BACKFILL_LIMIT);
     for (const hint of hints.slice(0, INITIAL_BACKFILL_LIMIT)) {
       try {
         const video = await artifacts.ensureVideo(hint.url);

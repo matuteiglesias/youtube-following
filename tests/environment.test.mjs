@@ -10,6 +10,28 @@ test("environment validation accepts Cloud Run-style runtime values", () => {
   );
 });
 
+test("production environment can boot without a YouTube API key for keyless upload-frontier work", () => {
+  assert.deepEqual(
+    validateEnvironment({
+      NODE_ENV: "production",
+      PORT: "8080",
+      APP_URL: "https://following.example",
+      NEXT_PUBLIC_SUPABASE_URL: "https://project.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "public",
+      SUPABASE_SERVICE_ROLE_KEY: "server",
+      MEDIA_MONITOR_SIDECAR_URL: "https://sidecar.example",
+      MEDIA_MONITOR_ENSURE_PATH: "/ensure",
+      MEDIA_MONITOR_INSPECT_PATH: "/inspect",
+      MEDIA_MONITOR_SUMMARY_PATH: "/summary",
+      POLAR_ENVIRONMENT: "production",
+      POLAR_ACCESS_TOKEN: "server",
+      POLAR_PRODUCT_ID: "plan",
+      POLAR_WEBHOOK_SECRET: "secret",
+    }),
+    { nodeEnv: "production", port: 8080 },
+  );
+});
+
 test("environment validation rejects an invalid port", () => {
   assert.throws(
     () => validateEnvironment({ NODE_ENV: "production", PORT: "not-a-port" }),

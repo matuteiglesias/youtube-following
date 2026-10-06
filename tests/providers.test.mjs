@@ -5,14 +5,15 @@ import {
 } from "../src/lib/providers/contracts.ts";
 import {
   parseYouTubeUploadFeed,
-  YouTubeChannelDiscoveryProvider,
+  YouTubeAtomUploadFrontier,
+  YouTubeDataApiChannelResolver,
 } from "../src/lib/providers/youtube-channel-discovery.ts";
 import {
   cloudRunIdentityToken,
   FakeVideoArtifactProvider,
   MediaMonitorVideoArtifactProvider,
 } from "../src/lib/providers/media-monitor-video-artifacts.ts";
-import { FakeChannelDiscoveryProvider } from "../src/lib/providers/fakes.ts";
+import { FakeChannelResolver, FakeUploadFrontierProvider } from "../src/lib/providers/fakes.ts";
 
 const channelId = "UC0123456789abcdefghijkl";
 const videoId = "abcdefghijk";
@@ -36,7 +37,7 @@ function response(body, status = 200, headers = {}) {
 
 test("channel references accept canonical channel IDs, ID URLs, handles and handle URLs", async () => {
   const calls = [];
-  const provider = new YouTubeChannelDiscoveryProvider("secret-api-key", async (url) => {
+  const provider = new YouTubeDataApiChannelResolver("secret-api-key", async (url) => {
     calls.push(String(url));
     return response({ items: [{ id: channelId, snippet: { title: " Sample ", customUrl: "sample", thumbnails: { high: { url: "https://img.example/channel.jpg" } } } }] });
   });
@@ -57,7 +58,7 @@ test("channel references accept canonical channel IDs, ID URLs, handles and hand
 
 test("channel resolver rejects malformed and foreign references before network access", async () => {
   let calls = 0;
-  const provider = new YouTubeChannelDiscoveryProvider("secret", async () => { calls += 1; return response({}); });
+  const provider = new YouTubeDataApiChannelResolver("secret", async () => { calls += 1; return response({}); });
   for (const input of ["sample", "http://youtube.com/@sample", "https://youtube.com/@sample/videos", "https://evil.example/@sample"]) {
     await assert.rejects(provider.resolve(input), (error) => error instanceof ProviderError && error.code === "invalid_reference");
   }
@@ -66,18 +67,104 @@ test("channel resolver rejects malformed and foreign references before network a
 
 test("resolver maps upstream errors to bounded product errors and omits API key from output", async () => {
   let requestedUrl = "";
-  const provider = new YouTubeChannelDiscoveryProvider("server-secret-key", async (url) => {
+  const provider = new YouTubeDataApiChannelResolver("server-secret-key", async (url) => {
     requestedUrl = String(url);
-    return response({ error: { message: "sensitive upstream detail" } }, 403);
+    return response({ error: { details: [{ reason: "API_KEY_SERVICE_BLOCKED" }], message: "sensitive upstream detail" } }, 403);
   });
   await assert.rejects(provider.resolve("@sample"), (error) => {
     assert.ok(error instanceof ProviderError);
     assert.equal(error.code, "unavailable");
+    assert.equal(error.diagnosticCode, "youtube_key_restricted");
+    assert.equal(error.upstreamStatus, 403);
     assert.equal(error.message, "YouTube is temporarily unavailable");
     assert.equal(error.message.includes("sensitive"), false);
     return true;
   });
   assert.equal(new URL(requestedUrl).searchParams.get("key"), "server-secret-key");
+});
+
+test("known canonical channel Atom frontier works with no API key configured", async () => {
+  const previous = process.env.YOUTUBE_API_KEY;
+  delete process.env.YOUTUBE_API_KEY;
+  try {
+    let requestedUrl = "";
+    const frontier = new YouTubeAtomUploadFrontier(async (url) => {
+      requestedUrl = String(url);
+      return response(`<?xml version="1.0"?><feed><entry><yt:videoId>${videoId}</yt:videoId><published>2026-10-04T12:00:00Z</published><title>Upload</title></entry></feed>`);
+    });
+    const result = await frontier.listRecentUploads(channel, 10);
+    assert.equal(result[0].native_video_id, videoId);
+    assert.equal(new URL(requestedUrl).searchParams.get("channel_id"), channelId);
+  } finally {
+    if (previous === undefined) delete process.env.YOUTUBE_API_KEY;
+    else process.env.YOUTUBE_API_KEY = previous;
+  }
+});
+
+test("resolver requires Data API configuration while upload frontier construction does not", () => {
+  assert.throws(
+    () => new YouTubeDataApiChannelResolver(""),
+    (error) => error instanceof ProviderError
+      && error.code === "unavailable"
+      && error.diagnosticCode === "youtube_configuration_missing",
+  );
+  assert.doesNotThrow(() => new YouTubeAtomUploadFrontier(async () => response("<feed />")));
+});
+
+test("upload frontier rejects malformed canonical channel IDs before network access", async () => {
+  let calls = 0;
+  const frontier = new YouTubeAtomUploadFrontier(async () => {
+    calls += 1;
+    return response("<feed />");
+  });
+  await assert.rejects(
+    frontier.listRecentUploads({ ...channel, native_channel_id: "not-a-channel" }, 10),
+    (error) => error instanceof ProviderError && error.code === "invalid_reference",
+  );
+  assert.equal(calls, 0);
+});
+
+test("resolver retains safe diagnostic classes for defensible Google failure reasons", async () => {
+  const cases = [
+    [403, { error: { details: [{ reason: "API_KEY_INVALID" }] } }, "youtube_auth_invalid"],
+    [403, { error: { details: [{ reason: "SERVICE_DISABLED" }] } }, "youtube_api_disabled"],
+    [403, { error: { details: [{ reason: "API_KEY_IP_ADDRESS_BLOCKED" }] } }, "youtube_key_restricted"],
+    [403, { error: { errors: [{ reason: "quotaExceeded" }] } }, "youtube_quota"],
+    [429, { error: { message: "rate body must not escape" } }, "youtube_rate_limited"],
+    [503, { error: { message: "backend body must not escape" } }, "youtube_upstream_5xx"],
+  ];
+  for (const [status, body, diagnosticCode] of cases) {
+    const resolver = new YouTubeDataApiChannelResolver("server-secret-key", async () => response(body, status));
+    await assert.rejects(resolver.resolve("@sample"), (error) => {
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.code, "unavailable");
+      assert.equal(error.diagnosticCode, diagnosticCode);
+      assert.equal(error.upstreamStatus, status);
+      assert.equal(error.message, "YouTube is temporarily unavailable");
+      assert.doesNotMatch(error.message, /body|escape/i);
+      return true;
+    });
+  }
+});
+
+test("resolver classifies timeouts without retaining thrown details", async () => {
+  const resolver = new YouTubeDataApiChannelResolver(
+    "server-secret-key",
+    async (_url, options) => new Promise((_, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("private timeout detail", "AbortError")),
+        { once: true },
+      );
+    }),
+    1,
+  );
+  await assert.rejects(
+    resolver.resolve("@sample"),
+    (error) => error instanceof ProviderError
+      && error.diagnosticCode === "youtube_timeout"
+      && !error.message.includes("private"),
+  );
 });
 
 test("public upload parser normalizes Atom/RSS dates, decodes text, deduplicates, and bounds output", () => {
@@ -101,7 +188,7 @@ test("public upload parser normalizes Atom/RSS dates, decodes text, deduplicates
 });
 
 test("feed fetch rejects oversized or malformed responses and maps timeout/upstream failures", async () => {
-  const providerFor = (fetcher) => new YouTubeChannelDiscoveryProvider("key", fetcher);
+  const providerFor = (fetcher) => new YouTubeAtomUploadFrontier(fetcher);
   const args = [channel, 10];
   await assert.rejects(providerFor(async () => response("<html>no feed</html>")).listRecentUploads(...args), (error) => error.code === "invalid_response");
   await assert.rejects(providerFor(async () => response("<feed />", 200, { "content-length": "1000001" })).listRecentUploads(...args), (error) => error.code === "invalid_response");
@@ -109,13 +196,14 @@ test("feed fetch rejects oversized or malformed responses and maps timeout/upstr
   await assert.rejects(providerFor(async () => { throw new Error("network details"); }).listRecentUploads(...args), (error) => error.code === "unavailable" && !error.message.includes("details"));
 });
 
-test("fake discovery provider returns test data without any external call", async () => {
+test("resolver and frontier fakes are independently injectable", async () => {
   const upload = { native_video_id: videoId, published_at: "2026-10-04T12:00:00.000Z", title: "Example", url: `https://www.youtube.com/watch?v=${videoId}` };
-  const fake = new FakeChannelDiscoveryProvider(channel, [upload]);
-  assert.deepEqual(await fake.resolve("@sample"), channel);
-  assert.deepEqual(await fake.listRecentUploads(channel, 1), [upload]);
-  assert.deepEqual(fake.resolved, ["@sample"]);
-  assert.equal(fake.listed[0].limit, 1);
+  const resolver = new FakeChannelResolver(channel);
+  const frontier = new FakeUploadFrontierProvider([upload]);
+  assert.deepEqual(await resolver.resolve("@sample"), channel);
+  assert.deepEqual(await frontier.listRecentUploads(channel, 1), [upload]);
+  assert.deepEqual(resolver.resolved, ["@sample"]);
+  assert.equal(frontier.listed[0].limit, 1);
 });
 
 test("Cloud Run token helper requests only a short-lived audience token from metadata", async () => {

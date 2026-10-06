@@ -109,11 +109,11 @@ For local QA only, set `ENABLE_INTERNAL_TEST_ENTITLEMENTS=1` and run `node scrip
 ## D2 provider adapters
 
 Server-side provider interfaces and implementations live under `src/lib/providers/`.
-`YouTubeChannelDiscoveryProvider` receives the Data API key in its constructor; call
-it only from server code. It resolves canonical channel metadata through the
-YouTube Data API and treats the public Atom/RSS upload feed as a discovery hint.
-The feed parser returns IDs and publication hints only; it does not create product
-Video rows.
+`YouTubeDataApiChannelResolver` owns `@handle` / URL resolution and requires the
+server-only YouTube Data API key. `YouTubeAtomUploadFrontier` separately reads
+public Atom/RSS upload hints for already-known canonical channel IDs and does not
+depend on that key. The feed parser returns IDs and publication hints only; it does
+not create product Video rows.
 
 `MediaMonitorVideoArtifactProvider` obtains a short-lived identity token from the
 Cloud Run metadata server for each call. It accepts the Media Monitor service URL,

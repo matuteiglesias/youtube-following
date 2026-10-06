@@ -106,7 +106,8 @@ Depends on D0. May run parallel to D1.
 
 ### Deliver
 
-- `ChannelDiscoveryProvider`;
+- `ChannelResolver`;
+- `UploadFrontierProvider`;
 - YouTube channel resolution for ID URL / @handle;
 - channel thumbnail/title/handle normalization;
 - public Atom/RSS recent-upload parser;
