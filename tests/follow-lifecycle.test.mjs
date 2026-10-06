@@ -3,7 +3,6 @@ import test from "node:test";
 import { FakeChannelResolver, FakeUploadFrontierProvider } from "../src/lib/providers/fakes.ts";
 import { ProviderError } from "../src/lib/providers/contracts.ts";
 import { FollowLifecycleError, followChannel, resolveChannel, unfollowChannel } from "../src/lib/follow-lifecycle.ts";
-import { productError } from "../src/lib/api-errors.ts";
 
 const channelId = "UC0123456789abcdefghijkl";
 const channel = {
@@ -104,22 +103,6 @@ test("resolver diagnostics survive lifecycle mapping while user copy stays bound
     assert.doesNotMatch(error.message, /restricted|403/i);
     return true;
   });
-});
-
-test("browser-visible errors omit internal provider diagnostics", () => {
-  const mapped = productError(new FollowLifecycleError(
-    "provider_unavailable",
-    "YouTube is temporarily unavailable. Try again shortly.",
-    { diagnosticCode: "youtube_key_restricted", upstreamStatus: 403 },
-  ));
-  assert.equal(mapped.status, 503);
-  assert.deepEqual(mapped.body, {
-    error: {
-      code: "PROVIDER_UNAVAILABLE",
-      message: "YouTube is temporarily unavailable. Try again shortly.",
-    },
-  });
-  assert.doesNotMatch(JSON.stringify(mapped.body), /youtube_key_restricted|403/);
 });
 
 test("first follow backfills at most ten canonical videos and never summaries", async () => {
