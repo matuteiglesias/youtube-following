@@ -64,8 +64,9 @@ YouTube Following — Next.js / Cloud Run
    ├── Supabase Auth
    ├── Supabase Postgres / RLS
    ├── Polar adapter
-   ├── YouTubeDiscoveryProvider
-   │     ├── YouTube Data API for channel resolution
+   ├── ChannelResolver
+   │     └── YouTube Data API for channel resolution
+   ├── UploadFrontierProvider
    │     └── public YouTube Atom/RSS feeds for new-upload hints
    └── VideoArtifactProvider
          ↓ authenticated Cloud Run invocation
@@ -75,7 +76,7 @@ YouTube Following — Next.js / Cloud Run
          └── GCS canonical artifacts
 ```
 
-## 4. Why there are two transitional provider adapters
+## 4. Why resolution and upload discovery are separate
 
 The current Media Monitor runtime is strong at:
 
@@ -87,20 +88,25 @@ The current Media Monitor runtime is strong at:
 
 It does not yet provide the product-level channel resolution/listing surface.
 
-v1 therefore uses two narrow server-side adapters:
+v1 therefore uses three narrow server-side adapters:
 
-### `ChannelDiscoveryProvider`
+### `ChannelResolver`
 
 Responsibilities:
 
 - resolve `@handle` / channel URL to canonical channel ID;
-- fetch canonical channel title/handle/thumbnail;
-- fetch the public Atom/RSS upload feed;
+- fetch canonical channel title/handle/thumbnail.
+
+The YouTube Data API key is product-owned and server-side. Resolution may require it.
+
+### `UploadFrontierProvider`
+
+Responsibilities:
+
+- read the public Atom/RSS upload feed for an already-known canonical channel ID;
 - return recent video IDs/publication hints.
 
-The YouTube Data API key is product-owned and server-side.
-
-Atom/RSS is treated only as a discovery hint. Canonical video metadata still comes from the VideoArtifactProvider.
+Upload-frontier reads do not depend on the YouTube Data API key. Atom/RSS remains only a discovery hint. Canonical video metadata still comes from the VideoArtifactProvider.
 
 ### `VideoArtifactProvider`
 
