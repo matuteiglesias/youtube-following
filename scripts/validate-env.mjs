@@ -15,7 +15,7 @@ export function validateEnvironment(env = process.env) {
   }
 
   if (env.NODE_ENV === "production") {
-    for (const name of ["APP_URL", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "MEDIA_MONITOR_SIDECAR_URL", "MEDIA_MONITOR_ENSURE_PATH", "MEDIA_MONITOR_INSPECT_PATH", "MEDIA_MONITOR_SUMMARY_PATH", "POLAR_ACCESS_TOKEN", "POLAR_PRODUCT_ID", "POLAR_WEBHOOK_SECRET"]) {
+    for (const name of ["APP_URL", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "MEDIA_MONITOR_SIDECAR_URL", "MEDIA_MONITOR_ENSURE_PATH", "MEDIA_MONITOR_INSPECT_PATH", "MEDIA_MONITOR_SUMMARY_PATH", "CHANNEL_SYNC_SCHEDULER_AUDIENCE", "CHANNEL_SYNC_SCHEDULER_SERVICE_ACCOUNT_EMAIL", "POLAR_ACCESS_TOKEN", "POLAR_PRODUCT_ID", "POLAR_WEBHOOK_SECRET"]) {
       if (!env[name]) errors.push(`${name} is required in production`);
     }
     if (env.POLAR_ENVIRONMENT && !["sandbox", "production"].includes(env.POLAR_ENVIRONMENT)) {
@@ -34,6 +34,18 @@ export function validateEnvironment(env = process.env) {
       } catch {
         errors.push("APP_URL must be an absolute HTTPS URL in production");
       }
+    }
+    if (env.CHANNEL_SYNC_SCHEDULER_AUDIENCE) {
+      try {
+        const audience = new URL(env.CHANNEL_SYNC_SCHEDULER_AUDIENCE);
+        if (audience.protocol !== "https:") errors.push("CHANNEL_SYNC_SCHEDULER_AUDIENCE must use HTTPS in production");
+      } catch {
+        errors.push("CHANNEL_SYNC_SCHEDULER_AUDIENCE must be an absolute HTTPS URL in production");
+      }
+    }
+    if (env.CHANNEL_SYNC_SCHEDULER_SERVICE_ACCOUNT_EMAIL
+      && !/^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/.test(env.CHANNEL_SYNC_SCHEDULER_SERVICE_ACCOUNT_EMAIL)) {
+      errors.push("CHANNEL_SYNC_SCHEDULER_SERVICE_ACCOUNT_EMAIL must be a service-account email");
     }
   }
 

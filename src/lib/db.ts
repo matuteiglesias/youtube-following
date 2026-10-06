@@ -16,6 +16,10 @@ export type ChannelRecord = ResolvedChannel & {
   next_feed_check_at: string | null;
 };
 
+export type SyncChannelRecord = ChannelRecord & {
+  sync_claim_until: string | null;
+};
+
 type FollowMutation = FollowRecord & { created: boolean };
 
 function admin() {
@@ -136,6 +140,56 @@ export async function markChannelChecked(channelUid: string, status: ChannelReco
     monitoring_status: status,
   }).eq("channel_uid", channelUid);
   if (error) throw new Error("Could not update channel state");
+}
+
+export async function claimDueChannels(limit = 25, leaseSeconds = 300): Promise<SyncChannelRecord[]> {
+  const { data, error } = await admin().rpc("claim_due_channels", {
+    requested_limit: limit,
+    lease_seconds: leaseSeconds,
+  });
+  if (error) throw new Error("Could not claim due channels");
+  return (data ?? []) as SyncChannelRecord[];
+}
+
+export async function listExistingNativeVideoIds(nativeVideoIds: string[]): Promise<Set<string>> {
+  const unique = [...new Set(nativeVideoIds.filter(Boolean))];
+  if (unique.length === 0) return new Set();
+  const { data, error } = await admin().from("videos")
+    .select("native_video_id")
+    .in("native_video_id", unique);
+  if (error) throw new Error("Could not load existing videos");
+  return new Set((data ?? []).map((row) => row.native_video_id as string));
+}
+
+export async function markChannelSyncResult(
+  channelUid: string,
+  status: ChannelRecord["monitoring_status"],
+  checkedAt: string,
+  nextCheck: string,
+): Promise<void> {
+  const { error } = await admin().from("channels").update({
+    last_feed_checked_at: checkedAt,
+    next_feed_check_at: nextCheck,
+    monitoring_status: status,
+    sync_claim_until: null,
+  }).eq("channel_uid", channelUid);
+  if (error) throw new Error("Could not update channel sync state");
+}
+
+export async function countDueChannels(): Promise<number> {
+  const { data, error } = await admin().rpc("count_due_channels");
+  if (error) throw new Error("Could not count due channels");
+  return Number(data ?? 0);
+}
+
+export function channelSyncRepository() {
+  return {
+    claimDueChannels,
+    listExistingNativeVideoIds,
+    upsertVideo,
+    markChannelSyncResult,
+    countDueChannels,
+  };
 }
 
 export function followRepository() {

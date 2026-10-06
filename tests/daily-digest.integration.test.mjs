@@ -10,6 +10,7 @@ const migrations = [
   "202610050004_d5_summary_engine.sql",
   "202610050005_d7_billing.sql",
   "202610050006_d8_demo_feed.sql",
+  "202610060001_d6_channel_sync.sql",
   "202610060002_daily_digest.sql",
 ].map((name) => new URL(`../supabase/migrations/${name}`, import.meta.url));
 
