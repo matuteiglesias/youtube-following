@@ -1,6 +1,6 @@
 import "server-only";
 import { MediaMonitorVideoArtifactProvider } from "./media-monitor-video-artifacts";
-import { YouTubeChannelDiscoveryProvider } from "./youtube-channel-discovery";
+import { YouTubeAtomUploadFrontier, YouTubeDataApiChannelResolver } from "./youtube-channel-discovery";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -8,8 +8,12 @@ function required(name: string): string {
   return value;
 }
 
-export function runtimeChannelDiscoveryProvider() {
-  return new YouTubeChannelDiscoveryProvider(required("YOUTUBE_API_KEY"));
+export function runtimeChannelResolver() {
+  return new YouTubeDataApiChannelResolver(process.env.YOUTUBE_API_KEY ?? "");
+}
+
+export function runtimeUploadFrontierProvider() {
+  return new YouTubeAtomUploadFrontier();
 }
 
 export function runtimeVideoArtifactProvider() {
