@@ -143,3 +143,12 @@ Provider IDs/provenance are retained. During transition Media Monitor remains ca
 Do not introduce Redis, Pub/Sub, workers, search infrastructure, analytics warehouse, extra microservices, or advanced admin tooling until a measured bottleneck demands them.
 
 The default response to “we may need this later” is “defer it.”
+
+
+## D-021 — Commission deterministic digest projection only
+
+**Decision:** add a provider-free, inference-free daily digest read model over the existing Follow × Video × cached Summary state, using caller-supplied explicit half-open time windows.
+
+**Bounds:** canonical reads require `window_start < window_end`, allow at most 7 days per request, return at most 100 visible items plus one overfetch row for explicit truncation, and preserve chronological ordering `published_at DESC, video_uid DESC`.
+
+**Scope:** this decision authorizes only the deterministic projection, product-owned digest contract/renderer, and a narrow authenticated read endpoint. P5 delivery remains deferred: no scheduler, email, push notification, summary generation, ranking, recommendation, or cross-video AI synthesis is commissioned here.

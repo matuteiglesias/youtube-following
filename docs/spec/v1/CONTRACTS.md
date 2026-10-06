@@ -240,6 +240,43 @@ Cursor must encode the stable ordering boundary and must not expose SQL.
 
 The route never triggers inference.
 
+### `GET /api/daily-digest`
+
+Authenticated, read-only deterministic projection.
+
+Required query parameters:
+
+- `window_start`: explicit ISO-8601 timestamp, inclusive;
+- `window_end`: explicit ISO-8601 timestamp, exclusive.
+
+Optional:
+
+- `limit`: 1–100, default 100.
+
+The server rejects windows where start is not before end or the span exceeds 7 days. It derives user identity from the authenticated session and reads only that user's current Follow set. The query makes no provider or inference calls.
+
+Response:
+
+```ts
+type DailyDigestInput = {
+  generated_at: string
+  window_start: string
+  window_end: string
+  item_count: number
+  channel_count: number
+  truncated: boolean
+  items: FeedItem[]
+}
+```
+
+Wire response:
+
+```json
+{"digest":{"generated_at":"...","window_start":"...","window_end":"...","item_count":0,"channel_count":0,"truncated":false,"items":[]}}
+```
+
+The canonical selection interval is exactly `published_at >= window_start AND published_at < window_end`, ordered by `published_at DESC, video_uid DESC`. The projection returns the latest available cached summary when one exists; it never generates one.
+
 ### `POST /api/videos/{video_uid}/summary`
 
 Authenticated and entitlement-controlled.

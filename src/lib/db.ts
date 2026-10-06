@@ -1,5 +1,6 @@
 import "server-only";
 import type { ResolvedChannel, Video } from "@/lib/providers/contracts";
+import type { DailyDigestQuery } from "@/lib/daily-digest";
 import type { FeedItem, FeedQuery } from "@/lib/feed";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -219,6 +220,18 @@ export async function listFeedRows(userId: string, query: FeedQuery): Promise<Fe
     requested_limit: query.limit,
   });
   if (error) throw new Error("Could not load feed");
+  return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
+}
+
+/** Read a bounded user-scoped digest window. This projection never invokes a provider. */
+export async function listDailyDigestRows(userId: string, query: DailyDigestQuery): Promise<FeedItem[]> {
+  const { data, error } = await admin().rpc("read_daily_digest", {
+    target_user_id: userId,
+    window_start: query.window_start,
+    window_end: query.window_end,
+    requested_limit: query.limit,
+  });
+  if (error) throw new Error("Could not load daily digest");
   return (data ?? []).map((row: { feed_item: unknown }) => row.feed_item as FeedItem);
 }
 
