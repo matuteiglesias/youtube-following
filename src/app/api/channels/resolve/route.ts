@@ -2,7 +2,7 @@ import { getAuthenticatedUser } from "@/lib/supabase/auth";
 import { followRepository } from "@/lib/db";
 import { resolveChannel } from "@/lib/follow-lifecycle";
 import { productError } from "@/lib/api-errors";
-import { runtimeChannelDiscoveryProvider } from "@/lib/providers/runtime";
+import { runtimeChannelResolver } from "@/lib/providers/runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     ? (body as { reference: string }).reference : "";
   if (!reference.trim()) return Response.json({ error: { code: "INVALID_CHANNEL_REFERENCE", message: "That doesn't look like a YouTube channel." } }, { status: 400 });
   try {
-    const result = await resolveChannel(reference, user.id, runtimeChannelDiscoveryProvider(), followRepository());
+    const result = await resolveChannel(reference, user.id, runtimeChannelResolver(), followRepository());
     return Response.json(result, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const mapped = productError(error);
