@@ -1,8 +1,7 @@
 import { getEntitlement, listMyFollows, followRepository } from "@/lib/db";
 import { followChannel } from "@/lib/follow-lifecycle";
 import { productError } from "@/lib/api-errors";
-import { runtimeChannelDiscoveryProvider } from "@/lib/providers/runtime";
-import { runtimeVideoArtifactProvider } from "@/lib/providers/runtime";
+import { runtimeUploadFrontierProvider, runtimeVideoArtifactProvider } from "@/lib/providers/runtime";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +41,7 @@ export async function POST(request: Request) {
   const channelUid = body && typeof body === "object" && typeof (body as { channel_uid?: unknown }).channel_uid === "string"
     ? (body as { channel_uid: string }).channel_uid : "";
   try {
-    const result = await followChannel(user.id, channelUid, runtimeChannelDiscoveryProvider, runtimeVideoArtifactProvider, followRepository());
+    const result = await followChannel(user.id, channelUid, runtimeUploadFrontierProvider, runtimeVideoArtifactProvider, followRepository());
     const { created, ...follow } = result.follow;
     return Response.json({ follow, backfill: result.backfill }, { status: created ? 201 : 200 });
   } catch (error) {
