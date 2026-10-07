@@ -5,8 +5,10 @@ import {
 } from "../src/lib/providers/contracts.ts";
 import {
   parseYouTubeUploadFeed,
+  ResilientYouTubeUploadFrontier,
   YouTubeAtomUploadFrontier,
   YouTubeDataApiChannelResolver,
+  YouTubeDataApiUploadFrontier,
 } from "../src/lib/providers/youtube-channel-discovery.ts";
 import {
   cloudRunIdentityToken,
@@ -194,6 +196,74 @@ test("feed fetch rejects oversized or malformed responses and maps timeout/upstr
   await assert.rejects(providerFor(async () => response("<feed />", 200, { "content-length": "1000001" })).listRecentUploads(...args), (error) => error.code === "invalid_response");
   await assert.rejects(providerFor(async () => response("upstream secret", 503)).listRecentUploads(...args), (error) => error.code === "unavailable" && !error.message.includes("secret"));
   await assert.rejects(providerFor(async () => { throw new Error("network details"); }).listRecentUploads(...args), (error) => error.code === "unavailable" && !error.message.includes("details"));
+});
+
+test("Atom 404 falls back to the official uploads playlist without invoking the resolver", async () => {
+  const calls = [];
+  const atom = new YouTubeAtomUploadFrontier(async (url) => {
+    calls.push(String(url));
+    return response("not found", 404);
+  });
+  const api = new YouTubeDataApiUploadFrontier("server-api-key", async (url) => {
+    calls.push(String(url));
+    if (String(url).includes("/channels?")) {
+      return response({ items: [{ id: channelId, contentDetails: { relatedPlaylists: { uploads: "UUuploads" } } }] });
+    }
+    return response({ items: [{
+      snippet: { channelId, title: "Upload", publishedAt: "2026-10-06T12:00:00Z" },
+      contentDetails: { videoId },
+    }] });
+  });
+  const frontier = new ResilientYouTubeUploadFrontier(atom, api);
+  const result = await frontier.listRecentUploads(channel, 10);
+  assert.deepEqual(result, [{
+    native_video_id: videoId,
+    published_at: "2026-10-06T12:00:00.000Z",
+    title: "Upload",
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+  }]);
+  assert.equal(calls.length, 3);
+  assert.equal(new URL(calls[1]).searchParams.get("part"), "contentDetails");
+  assert.equal(new URL(calls[1]).searchParams.get("id"), channelId);
+  assert.equal(new URL(calls[2]).searchParams.get("playlistId"), "UUuploads");
+  assert.equal(new URL(calls[2]).searchParams.get("part"), "snippet,contentDetails");
+});
+
+test("Atom fallback is bounded to 404, rate-limit, upstream, and timeout failures", async () => {
+  for (const failure of [404, 429, 503, "timeout"]) {
+    const calls = [];
+    const atom = new YouTubeAtomUploadFrontier(async (url) => {
+      calls.push(String(url));
+      if (failure === "timeout") throw new DOMException("private timeout", "AbortError");
+      return response("failure", failure);
+    });
+    const api = new YouTubeDataApiUploadFrontier("server-api-key", async (url) => {
+      calls.push(String(url));
+      if (calls.length === 2) return response({ items: [{ id: channelId, contentDetails: { relatedPlaylists: { uploads: "UUuploads" } } }] });
+      return response({ items: [] });
+    });
+    await new ResilientYouTubeUploadFrontier(atom, api).listRecentUploads(channel, 10);
+    assert.equal(calls.length, 3, failure);
+  }
+});
+
+test("Atom malformed content does not trigger the Data API fallback", async () => {
+  let apiCalls = 0;
+  const atom = new YouTubeAtomUploadFrontier(async () => response("<html>not a feed</html>", 200));
+  const api = { async listRecentUploads() { apiCalls += 1; return []; } };
+  await assert.rejects(
+    new ResilientYouTubeUploadFrontier(atom, api).listRecentUploads(channel, 10),
+    (error) => error instanceof ProviderError && error.code === "invalid_response",
+  );
+  assert.equal(apiCalls, 0);
+});
+
+test("without an API key, Atom outage remains bounded and does not make an unconfigured fallback call", async () => {
+  const atom = new YouTubeAtomUploadFrontier(async () => response("not found", 404));
+  await assert.rejects(
+    new ResilientYouTubeUploadFrontier(atom, null).listRecentUploads(channel, 10),
+    (error) => error instanceof ProviderError && error.upstreamStatus === 404,
+  );
 });
 
 test("resolver and frontier fakes are independently injectable", async () => {

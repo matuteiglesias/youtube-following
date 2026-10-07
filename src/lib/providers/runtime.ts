@@ -1,6 +1,11 @@
 import "server-only";
 import { MediaMonitorVideoArtifactProvider } from "./media-monitor-video-artifacts";
-import { YouTubeAtomUploadFrontier, YouTubeDataApiChannelResolver } from "./youtube-channel-discovery";
+import {
+  ResilientYouTubeUploadFrontier,
+  YouTubeAtomUploadFrontier,
+  YouTubeDataApiChannelResolver,
+  YouTubeDataApiUploadFrontier,
+} from "./youtube-channel-discovery";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -13,7 +18,12 @@ export function runtimeChannelResolver() {
 }
 
 export function runtimeUploadFrontierProvider() {
-  return new YouTubeAtomUploadFrontier();
+  const atom = new YouTubeAtomUploadFrontier();
+  const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+  return new ResilientYouTubeUploadFrontier(
+    atom,
+    apiKey ? new YouTubeDataApiUploadFrontier(apiKey) : null,
+  );
 }
 
 export function runtimeVideoArtifactProvider() {
