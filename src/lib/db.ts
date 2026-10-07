@@ -31,7 +31,15 @@ export async function upsertChannel(channel: ResolvedChannel): Promise<ChannelRe
     ...channel,
     monitoring_status: "idle",
   }, { onConflict: "native_channel_id" }).select("channel_uid,native_channel_id,handle,title,canonical_url,thumbnail_url,monitoring_status,last_feed_checked_at,next_feed_check_at").single();
-  if (error || !data) throw new Error("Could not save channel");
+  if (error) {
+    console.error("channel persistence failed", {
+      code: error.code ?? null,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
+    });
+    throw new Error("Could not save channel");
+  }
+  if (!data) throw new Error("Could not save channel");
   return data as ChannelRecord;
 }
 
