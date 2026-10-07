@@ -28,7 +28,12 @@ function admin() {
 
 export async function upsertChannel(channel: ResolvedChannel): Promise<ChannelRecord> {
   const { data, error } = await admin().from("channels").upsert({
-    ...channel,
+    channel_uid: channel.channel_uid,
+    native_channel_id: channel.native_channel_id,
+    handle: channel.handle,
+    title: channel.title,
+    canonical_url: channel.canonical_url,
+    thumbnail_url: channel.thumbnail_url,
     monitoring_status: "idle",
   }, { onConflict: "native_channel_id" }).select("channel_uid,native_channel_id,handle,title,canonical_url,thumbnail_url,monitoring_status,last_feed_checked_at,next_feed_check_at").single();
   if (error || !data) throw new Error("Could not save channel");
