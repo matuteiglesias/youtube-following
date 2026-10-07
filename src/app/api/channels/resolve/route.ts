@@ -3,6 +3,7 @@ import { followRepository } from "@/lib/db";
 import { resolveChannel } from "@/lib/follow-lifecycle";
 import { productError } from "@/lib/api-errors";
 import { runtimeChannelResolver } from "@/lib/providers/runtime";
+import { ProviderError } from "@/lib/providers/contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,19 @@ export async function POST(request: Request) {
     const result = await resolveChannel(reference, user.id, runtimeChannelResolver(), followRepository());
     return Response.json(result, { headers: { "cache-control": "no-store" } });
   } catch (error) {
+    const providerError = error instanceof ProviderError ? error : null;
+    const fields = error && typeof error === "object" ? error as {
+      code?: unknown;
+      diagnosticCode?: unknown;
+      upstreamStatus?: unknown;
+    } : {};
+    console.error("channel resolution failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+      code: typeof fields.code === "string" ? fields.code : null,
+      diagnosticCode: typeof fields.diagnosticCode === "string" ? fields.diagnosticCode : null,
+      upstreamStatus: typeof fields.upstreamStatus === "number" ? fields.upstreamStatus : null,
+      providerError: Boolean(providerError),
+    });
     const mapped = productError(error);
     return Response.json(mapped.body, { status: mapped.status });
   }
