@@ -8,6 +8,7 @@ import {
 } from "./contracts.ts";
 
 const YOUTUBE_API = "https://www.googleapis.com/youtube/v3/channels";
+const YOUTUBE_PLAYLIST_ITEMS_API = "https://www.googleapis.com/youtube/v3/playlistItems";
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com"]);
 const MAX_FEED_LIMIT = 50;
 const MAX_FEED_BYTES = 1_000_000;
@@ -18,7 +19,20 @@ type FetchLike = typeof fetch;
 type YouTubeChannelResponse = {
   items?: Array<{
     id?: string;
+    contentDetails?: { relatedPlaylists?: { uploads?: string } };
     snippet?: { title?: string; customUrl?: string; thumbnails?: Record<string, { url?: string }> };
+  }>;
+};
+
+type YouTubePlaylistItemsResponse = {
+  items?: Array<{
+    snippet?: {
+      channelId?: string;
+      title?: string;
+      publishedAt?: string;
+      resourceId?: { videoId?: string };
+    };
+    contentDetails?: { videoId?: string; videoPublishedAt?: string };
   }>;
 };
 
@@ -198,6 +212,16 @@ async function dataApiFailure(response: Response): Promise<ProviderError> {
   });
 }
 
+function atomFailureCanUseDataApi(error: ProviderError): boolean {
+  if (error.code !== "unavailable") return false;
+  return error.upstreamStatus === 404
+    || error.upstreamStatus === 429
+    || (error.upstreamStatus !== null && error.upstreamStatus >= 500)
+    || error.diagnosticCode === "youtube_rate_limited"
+    || error.diagnosticCode === "youtube_upstream_5xx"
+    || error.diagnosticCode === "youtube_timeout";
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
@@ -323,5 +347,117 @@ export class YouTubeAtomUploadFrontier implements UploadFrontierProvider {
       }
       throw new ProviderError("unavailable", "YouTube uploads are temporarily unavailable");
     } finally { clearTimeout(timeout); }
+  }
+}
+
+/** Official API upload frontier used only when the public Atom frontier is unavailable. */
+export class YouTubeDataApiUploadFrontier implements UploadFrontierProvider {
+  private readonly apiKey: string;
+  private readonly fetcher: FetchLike;
+  private readonly timeoutMs: number;
+
+  constructor(apiKey: string, fetcher: FetchLike = fetch, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (!apiKey.trim()) {
+      throw new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+        diagnosticCode: "youtube_configuration_missing",
+      });
+    }
+    this.apiKey = apiKey;
+    this.fetcher = fetcher;
+    this.timeoutMs = timeoutMs;
+  }
+
+  async listRecentUploads(channel: ResolvedChannel, limit: number): Promise<UploadHint[]> {
+    if (!/^UC[A-Za-z0-9_-]{22}$/.test(channel.native_channel_id)) {
+      throw new ProviderError("invalid_reference", "Invalid canonical YouTube channel");
+    }
+    if (!Number.isInteger(limit) || limit < 0) throw new RangeError("limit must be a non-negative integer");
+    if (limit === 0) return [];
+
+    const channelUrl = new URL(YOUTUBE_API);
+    channelUrl.searchParams.set("part", "contentDetails");
+    channelUrl.searchParams.set("id", channel.native_channel_id);
+    channelUrl.searchParams.set("key", this.apiKey);
+    const channelPayload = await this.requestJson<YouTubeChannelResponse>(channelUrl);
+    const item = channelPayload.items?.[0];
+    const uploadsPlaylistId = item?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploadsPlaylistId || item?.id !== channel.native_channel_id) {
+      throw new ProviderError("invalid_response", "YouTube returned an invalid uploads playlist", {
+        diagnosticCode: "youtube_invalid_response",
+      });
+    }
+
+    const playlistUrl = new URL(YOUTUBE_PLAYLIST_ITEMS_API);
+    playlistUrl.searchParams.set("part", "snippet,contentDetails");
+    playlistUrl.searchParams.set("playlistId", uploadsPlaylistId);
+    playlistUrl.searchParams.set("maxResults", String(Math.min(limit, MAX_FEED_LIMIT)));
+    playlistUrl.searchParams.set("key", this.apiKey);
+    const playlistPayload = await this.requestJson<YouTubePlaylistItemsResponse>(playlistUrl);
+    const results: UploadHint[] = [];
+    for (const playlistItem of playlistPayload.items ?? []) {
+      const videoId = playlistItem.contentDetails?.videoId ?? playlistItem.snippet?.resourceId?.videoId;
+      const published = playlistItem.contentDetails?.videoPublishedAt ?? playlistItem.snippet?.publishedAt;
+      if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId) || !published) continue;
+      const date = new Date(published);
+      if (!Number.isFinite(date.getTime())) continue;
+      if (playlistItem.snippet?.channelId && playlistItem.snippet.channelId !== channel.native_channel_id) continue;
+      results.push({
+        native_video_id: videoId,
+        published_at: date.toISOString(),
+        title: playlistItem.snippet?.title?.trim() || null,
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+      });
+      if (results.length === Math.min(limit, MAX_FEED_LIMIT)) break;
+    }
+    return results;
+  }
+
+  private async requestJson<T>(url: URL): Promise<T> {
+    const response = await this.fetchWithTimeout(url);
+    if (!response.ok) throw await dataApiFailure(response);
+    try { return await response.json() as T; }
+    catch {
+      throw new ProviderError("invalid_response", "YouTube returned an invalid response", {
+        diagnosticCode: "youtube_invalid_response",
+        upstreamStatus: response.status,
+      });
+    }
+  }
+
+  private async fetchWithTimeout(input: string | URL): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try { return await this.fetcher(input, { signal: controller.signal }); }
+    catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        throw new ProviderError("unavailable", "YouTube is temporarily unavailable", {
+          diagnosticCode: "youtube_timeout",
+        });
+      }
+      throw new ProviderError("unavailable", "YouTube is temporarily unavailable");
+    } finally { clearTimeout(timeout); }
+  }
+}
+
+/** Atom remains the cheap primary; the API is a bounded outage fallback. */
+export class ResilientYouTubeUploadFrontier implements UploadFrontierProvider {
+  private readonly atom: UploadFrontierProvider;
+  private readonly dataApi: UploadFrontierProvider | null;
+
+  constructor(
+    atom: UploadFrontierProvider,
+    dataApi: UploadFrontierProvider | null,
+  ) {
+    this.atom = atom;
+    this.dataApi = dataApi;
+  }
+
+  async listRecentUploads(channel: ResolvedChannel, limit: number): Promise<UploadHint[]> {
+    try {
+      return await this.atom.listRecentUploads(channel, limit);
+    } catch (error) {
+      if (!(error instanceof ProviderError) || !atomFailureCanUseDataApi(error) || !this.dataApi) throw error;
+      return this.dataApi.listRecentUploads(channel, limit);
+    }
   }
 }
