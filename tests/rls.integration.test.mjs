@@ -12,6 +12,7 @@ const d8MigrationUrl = new URL("../supabase/migrations/202610050006_d8_demo_feed
 const freeFollowingMigrationUrl = new URL("../supabase/migrations/202610190001_free_following_99.sql", import.meta.url);
 const feedLiveMigrationUrl = new URL("../supabase/migrations/202610190002_feed_live_metadata.sql", import.meta.url);
 const metadataGateMigrationUrl = new URL("../supabase/migrations/202610190003_summary_metadata_gate.sql", import.meta.url);
+const shortClipMigrationUrl = new URL("../supabase/migrations/202610190004_explicit_short_video_summaries.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -39,6 +40,7 @@ async function createDatabase() {
   await db.exec(await readFile(freeFollowingMigrationUrl, "utf8"));
   await db.exec(await readFile(feedLiveMigrationUrl, "utf8"));
   await db.exec(await readFile(metadataGateMigrationUrl, "utf8"));
+  await db.exec(await readFile(shortClipMigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -318,6 +320,39 @@ test("incomplete or scheduled video metadata cannot consume inference, and feed 
   await db.exec("reset role");
 });
 
+test("63-second clips can be generated and shared; under-30s clips are not charged", async (t) => {
+  const db=await createDatabase();
+  t.after(()=>db.close());
+  const a="00000000-0000-0000-0000-00000000000a";
+  const b="00000000-0000-0000-0000-00000000000b";
+  await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
+  await db.exec("set role service_role");
+  await db.query("select public.grant_internal_test_entitlement($1,99,240)",[a]);
+  await db.exec(
+    "insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status) " +
+    "values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','63s Clip','https://youtube.com/watch?v=abcdefghijk',now(),63,'public','completed'), " +
+    "('youtube:LMNOPQRSTUV','youtube-channel:UC1','LMNOPQRSTUV','20s Clip','https://youtube.com/watch?v=LMNOPQRSTUV',now(),20,'public','completed')");
+  const key="sha256:"+("b".repeat(64));
+  const clip=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',2) as result",
+    [a,"youtube:abcdefghijk",key]);
+  assert.equal(clip.rows[0].result.state,"claimed");
+  const persisted=await db.query("select public.complete_summary_generation($1,$2,$3,$4,$5,$6,$7,$8) as saved",
+    [key,a,"clip-summary-id","The clip discussed public budgets.",["Point one"],"es","Media Monitor","test"]);
+  assert.equal(persisted.rows[0].saved,true);
+  const cache=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',2) as result",
+    [b,"youtube:abcdefghijk",key]);
+  assert.equal(cache.rows[0].result.state,"available");
+  const shortKey="sha256:"+("c".repeat(64));
+  const brief=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',1) as result",
+    [a,"youtube:LMNOPQRSTUV",shortKey]);
+  assert.equal(brief.rows[0].result.state,"short_video");
+  assert.equal((await db.query("select count(*)::int as n from public.summary_generation_claims")).rows[0].n,1);
+  assert.equal((await db.query("select count(*)::int as n from public.summary_usage")).rows[0].n,1);
+  const feed=await db.query("select feed_item from public.read_feed_page($1,null,null,null,20)",[b]);
+  assert.equal(feed.rows.find((row)=>row.feed_item.video.video_uid==="youtube:abcdefghijk").feed_item.summary.summary,
+    "The clip discussed public budgets.");
+});
+
 test("D5 serializes global claims, charges only the successful winner, and reuses the cache", async (t) => {
   const db = await createDatabase();
   t.after(() => db.close());
@@ -356,12 +391,14 @@ test("D5 quota, eligibility, and failed attempts stop before provider ownership 
   await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status)
     values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','Eligible','https://youtube.com/watch?v=abcdefghijk',now(),121,'public','completed'),
            ('youtube:lmnopqrstuv','youtube-channel:UC1','lmnopqrstuv','Live','https://youtube.com/watch?v=lmnopqrstuv',now(),300,'public','upcoming'),
-           ('youtube:mnopqrstuvw','youtube-channel:UC1','mnopqrstuvw','Short','https://youtube.com/watch?v=mnopqrstuvw',now(),89,'public','completed'),
+           ('youtube:mnopqrstuvw','youtube-channel:UC1','mnopqrstuvw','Clip 89 sec','https://youtube.com/watch?v=mnopqrstuvw',now(),89,'public','completed'),
+           ('youtube:LMNOPQRSTUV','youtube-channel:UC1','LMNOPQRSTUV','Clip 20 sec','https://youtube.com/watch?v=LMNOPQRSTUV',now(),20,'public','completed'),
            ('youtube:ZYXWVUTSRQP','youtube-channel:UC1','ZYXWVUTSRQP','Long','https://youtube.com/watch?v=ZYXWVUTSRQP',now(),7201,'public','completed')`);
   const eligibilityFeed = await db.query("select feed_item from public.read_feed_page($1,$2,$3,$4,$5)",
     [a, null, null, null, 20]);
   const stateByVideo = Object.fromEntries(eligibilityFeed.rows.map((row) => [row.feed_item.video.video_uid, row.feed_item.summary.state]));
-  assert.equal(stateByVideo["youtube:mnopqrstuvw"], "short_video");
+  assert.equal(stateByVideo["youtube:mnopqrstuvw"], "not_requested");
+  assert.equal(stateByVideo["youtube:LMNOPQRSTUV"], "short_video");
   assert.equal(stateByVideo["youtube:ZYXWVUTSRQP"], "long_video");
   assert.equal(stateByVideo["youtube:lmnopqrstuv"], "live_or_upcoming");
   const overQuota = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",

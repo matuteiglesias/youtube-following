@@ -56,11 +56,17 @@ export async function handleSummaryPost(_request: Request, videoUid: string, dep
     const claim = await dependencies.claim({ userId: user.id, videoUid, summaryKey: key,
       specVersion: SUMMARY_SPEC_VERSION, language: SUMMARY_LANGUAGE, chargedMinutes });
 
-    if (claim.state === "available" && claim.summary) return response(view(claim.summary));
+    if (claim.state === "available" && claim.summary) {
+      console.info("summary_request", { phase: "cache_hit" });
+      return response(view(claim.summary));
+    }
     if (claim.state === "claimed") {
+      console.info("summary_request", { phase: "provider_started" });
       try {
         const result = await dependencies.ensureSummary(videoUid);
         const summary = result.summary;
+        console.info("summary_request", { phase: "provider_result", state: summary.state,
+          has_summary_id: Boolean(summary.summary_id), has_text: Boolean(summary.summary?.trim()) });
         if (summary.state !== "available" || !summary.summary_id || !summary.summary?.trim()) {
           const retryable = await dependencies.fail(key, user.id);
           return response({ state: "failed", retryable });
@@ -69,15 +75,22 @@ export async function handleSummaryPost(_request: Request, videoUid: string, dep
           summaryId: summary.summary_id, summary: summary.summary.trim(),
           keyPoints: summary.key_points.filter((point) => typeof point === "string" && point.trim()).slice(0, 3),
           language: summary.language ?? SUMMARY_LANGUAGE, provider: result.provider, model: result.model });
-        if (!saved) return response({ state: "generating" }, 202);
+        if (!saved) {
+          console.info("summary_request", { phase: "persist_pending" });
+          return response({ state: "generating" }, 202);
+        }
+        console.info("summary_request", { phase: "persisted" });
         return response({ ...summary, language: summary.language ?? SUMMARY_LANGUAGE });
-      } catch {
+      } catch (error) {
+        console.error("summary_request", { phase: "provider_or_persistence_failed",
+          error_class: error instanceof Error ? error.name : "unknown" });
         let retryable = false;
         try { retryable = await dependencies.fail(key, user.id); } catch { /* lease expiry makes a claim recoverable */ }
         return response({ state: "failed", retryable });
       }
     }
     if (claim.state === "generating") return response({ state: "generating" }, 202);
+    console.info("summary_request", { phase: "claim_ineligible", state: claim.state });
     if (claim.state === "quota_blocked" || claim.state === "generation_not_enabled")
       return response({ state: claim.state });
     if (claim.state === "short_video" || claim.state === "long_video" || claim.state === "live_or_upcoming" || claim.state === "metadata_pending") {

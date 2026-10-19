@@ -12,6 +12,7 @@ const migrationNames = [
   "202610190001_free_following_99.sql",
   "202610190002_feed_live_metadata.sql",
   "202610190003_summary_metadata_gate.sql",
+  "202610190004_explicit_short_video_summaries.sql",
 ];
 
 async function createDatabase() {

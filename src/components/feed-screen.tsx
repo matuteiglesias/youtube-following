@@ -52,7 +52,7 @@ export function mayAutoRequestSummary(demo: boolean, item: FeedItem): boolean {
     && item.video.live_status !== "upcoming"
     && item.video.availability === "public"
     && (item.video.duration_seconds === null || item.video.duration_seconds <= 0
-      || item.video.duration_seconds >= 90 && item.video.duration_seconds <= 7200);
+      || item.video.duration_seconds >= 30 && item.video.duration_seconds <= 7200);
 }
 
 export function shouldAutoRequestSelectedSummary(
@@ -65,10 +65,11 @@ export function shouldAutoRequestSelectedSummary(
     && !attempted.has(selectedItem.video.video_uid);
 }
 
-function FeedCard({ item, onSelect, selected }: {
+function FeedCard({ item, onSelect, selected, preparing }: {
   item: FeedItem;
   onSelect: (videoUid: string) => void;
   selected: boolean;
+  preparing: boolean;
 }) {
   const duration = durationLabel(item.video.duration_seconds);
   const availability = availabilityLabel(item.video.availability);
@@ -86,7 +87,7 @@ function FeedCard({ item, onSelect, selected }: {
       <h2 className="feed-card__title">{item.video.title}</h2>
       {availability ? <p className="feed-card__availability">{availability}</p> : null}
       <section className="feed-card__summary" aria-label="Summary status">
-        <h3>{summaryStateLabel(item.summary.state)}</h3>
+        <h3>{preparing ? "Preparing summary…" : summaryStateLabel(item.summary.state)}</h3>
         {item.summary.state === "available" && item.summary.summary
           ? <>
             <p className="feed-card__summary-preview">{item.summary.summary}</p>
@@ -98,7 +99,7 @@ function FeedCard({ item, onSelect, selected }: {
       <div className="feed-card__actions">
         <button className="feed-card__open" type="button"
           aria-pressed={selected}
-          onClick={() => onSelect(item.video.video_uid)}>Read summary <span aria-hidden="true">→</span></button>
+          onClick={() => onSelect(item.video.video_uid)}>{preparing ? "Preparing…" : item.summary.state === "short_video" ? "Video details" : item.summary.state === "available" ? "Read summary" : "Summarize video"} <span aria-hidden="true">→</span></button>
         <a className="feed-card__watch" href={item.video.canonical_url} target="_blank" rel="noreferrer">
           YouTube <span aria-hidden="true">↗</span>
         </a>
@@ -107,12 +108,13 @@ function FeedCard({ item, onSelect, selected }: {
   </article>;
 }
 
-function VideoSidecar({ item, demo, onClose, onRetry, canRetry }: {
+function VideoSidecar({ item, demo, onClose, onRetry, canRetry, preparing }: {
   item: FeedItem | null;
   demo: boolean;
   onClose: () => void;
   onRetry: (videoUid: string) => void;
   canRetry: boolean;
+  preparing: boolean;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const itemUid = item?.video.video_uid;
@@ -131,8 +133,9 @@ function VideoSidecar({ item, demo, onClose, onRetry, canRetry }: {
       <p className="video-sidecar__channel">{item.channel.title} · <time dateTime={item.video.published_at}>{publishedLabel(item.video.published_at)}</time></p>
       <h2>{item.video.title}</h2>
       <p className="video-sidecar__duration">{durationLabel(item.video.duration_seconds) ?? "Duration unavailable"}</p>
-      <section className="video-sidecar__content" aria-label="Summary">
-        <h3>{summaryStateLabel(item.summary.state)}</h3>
+      <section className="video-sidecar__content" aria-label="Summary" aria-busy={preparing}>
+        <h3>{preparing ? "Preparing summary…" : summaryStateLabel(item.summary.state)}</h3>
+        {preparing ? <p role="status">Generating the first summary can take 30–60 seconds. Once ready, it will be cached and shared across users.</p> : null}
         {item.summary.state === "available" && item.summary.summary
           ? <p>{item.summary.summary}</p> : null}
         {item.summary.state === "available" && item.summary.key_points.length > 0
@@ -145,6 +148,10 @@ function VideoSidecar({ item, demo, onClose, onRetry, canRetry }: {
           ? <p>Activate your first-user trial in <a href="/account">Account</a>, or use an active summary plan. Previously cached summaries remain free.</p> : null}
         {item.summary.state === "metadata_pending"
           ? <p>Waiting for YouTube to provide a completed-video duration. Try again after publication.</p> : null}
+        {item.summary.state === "short_video" && !demo
+          ? <p>This clip is under 30 seconds, so it is too brief for on-demand AI generation. You can still watch it directly.</p> : null}
+        {item.summary.state === "failed" && !preparing && !demo
+          ? <p>We could not create a summary for this video. It may lack an accessible transcript. You can retry when the provider becomes available.</p> : null}
         {demo && item.summary.state !== "available"
           ? <p>Only previously cached summaries appear in the public demo.</p> : null}
       </section>
@@ -167,6 +174,7 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
   const [loading, setLoading] = useState(false);
   const activeSummaryRequests = useRef(new Set<string>());
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [preparingSummaryUids, setPreparingSummaryUids] = useState<ReadonlySet<string>>(new Set());
   const [selectedVideoUid, setSelectedVideoUid] = useState<string | null>(null);
   const requestedSummaryUids = useRef(new Set<string>());
   const [failedSummaryUids, setFailedSummaryUids] = useState<ReadonlySet<string>>(new Set());
@@ -176,6 +184,7 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
     if (activeSummaryRequests.current.size >= 2 || activeSummaryRequests.current.has(videoUid)) return;
     activeSummaryRequests.current.add(videoUid);
     requestedSummaryUids.current.add(videoUid);
+    setPreparingSummaryUids((current) => new Set(current).add(videoUid));
     try {
       const response = await fetch(`/api/videos/${encodeURIComponent(videoUid)}/summary`, { method: "POST", cache: "no-store" });
       const payload = await response.json() as { summary?: FeedItem["summary"] };
@@ -193,6 +202,11 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
       setFailedSummaryUids((current) => new Set(current).add(videoUid));
     } finally {
       activeSummaryRequests.current.delete(videoUid);
+      setPreparingSummaryUids((current) => {
+        const next = new Set(current);
+        next.delete(videoUid);
+        return next;
+      });
       setItems((current) => [...current]);
     }
   }
@@ -284,9 +298,10 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
 
     {items.length > 0 ? <div className="feed-workspace">
       <div className="feed-list">{items.map((item) => <FeedCard key={item.video.video_uid} item={item}
-        selected={selectedVideoUid === item.video.video_uid} onSelect={selectVideo} />)}</div>
+        selected={selectedVideoUid === item.video.video_uid}
+        preparing={preparingSummaryUids.has(item.video.video_uid)} onSelect={selectVideo} />)}</div>
       <VideoSidecar item={selectedItem} demo={demo} onClose={closeSelectedVideo}
-        onRetry={retrySummary} canRetry={Boolean(selectedItem && failedSummaryUids.has(selectedItem.video.video_uid)
+        onRetry={retrySummary} preparing={Boolean(selectedItem && preparingSummaryUids.has(selectedItem.video.video_uid))} canRetry={Boolean(selectedItem && failedSummaryUids.has(selectedItem.video.video_uid)
           && selectedItem.summary.state === "not_requested")} />
     </div>
       : error
