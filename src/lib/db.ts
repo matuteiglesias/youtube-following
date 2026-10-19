@@ -4,6 +4,7 @@ import type { DailyDigestQuery } from "@/lib/daily-digest";
 import type { FeedItem, FeedQuery } from "@/lib/feed";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { fetchCurrentVideoMetadata } from "@/lib/providers/youtube-video-metadata";
 
 export type FollowRecord = {
   channel_uid: string;
@@ -128,6 +129,35 @@ export async function failSummaryGeneration(summaryKey: string, userId: string):
   });
   if (error) throw new Error("Could not record summary failure");
   return data === true;
+}
+
+/** Repair incomplete provider metadata only for an explicitly requested video.
+ * Do not write unknown or zero-valued fields over existing valid metadata.
+ */
+export async function getFreshVideoForSummary(videoUid: string) {
+  const original = await getVideoForSummary(videoUid);
+  if (!original) return null;
+  if (original.live_status !== "unknown" && original.duration_seconds !== null && original.duration_seconds > 0) {
+    return original;
+  }
+  const details = await fetchCurrentVideoMetadata(videoUid, process.env.YOUTUBE_API_KEY ?? "");
+  if (!details) return original;
+  const update: Record<string, unknown> = {};
+  if (details.duration_seconds) update.duration_seconds = details.duration_seconds;
+  if (details.live_status !== "unknown") update.live_status = details.live_status;
+  if (details.availability !== "unknown") update.availability = details.availability;
+  if (details.thumbnail_url) update.thumbnail_url = details.thumbnail_url;
+  if (Object.keys(update).length === 0) return original;
+  const { error } = await admin().from("videos").update(update).eq("video_uid",videoUid);
+  if (error) {
+    console.error("summary_metadata_update_failed");
+    return original;
+  }
+  return {
+    ...original, ...("duration_seconds" in update ? {duration_seconds:update.duration_seconds as number} : {}),
+    ...("live_status" in update ? {live_status:update.live_status as string} : {}),
+    ...("availability" in update ? {availability:update.availability as string} : {}),
+  };
 }
 
 export async function getVideoForSummary(videoUid: string) {

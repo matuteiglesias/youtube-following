@@ -80,7 +80,7 @@ test("anonymous demo cards can never enter the automatic summary request frontie
 });
 
 test("Feed component renders each summary state and safe error and empty states", () => {
-  const states = ["available", "generating", "not_requested", "short_video", "long_video", "live_or_upcoming", "quota_blocked", "failed"];
+  const states = ["available", "generating", "not_requested", "short_video", "long_video", "live_or_upcoming", "quota_blocked", "generation_not_enabled", "metadata_pending", "failed"];
   const html = renderToStaticMarkup(React.createElement(FeedScreen, {
     initialPage: { items: states.map((state) => item(state)), next_cursor: null },
     channels: [], selectedChannelUid: null, initialError: false, filterUnavailable: false,

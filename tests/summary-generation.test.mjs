@@ -46,7 +46,7 @@ test("summary route derives the key and charge server-side and commits only vali
 });
 
 test("cache, concurrent claims, quota, and ineligible videos do not call the provider", async () => {
-  for (const state of ["available", "generating", "quota_blocked", "short_video", "long_video", "live_or_upcoming"]) {
+  for (const state of ["available", "generating", "quota_blocked", "generation_not_enabled", "metadata_pending", "short_video", "long_video", "live_or_upcoming"]) {
     const deps = dependencies({ claim: async () => state === "available"
       ? { state, summary: { state, summary_id: "cached", summary_text: "Cached", key_points: ["Point"], language: "en", generated_at: "2026-10-01T00:00:00Z" } }
       : ({ state }) });

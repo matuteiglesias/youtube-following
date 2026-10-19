@@ -1,4 +1,4 @@
-import { claimSummaryGeneration, completeSummaryGeneration, failSummaryGeneration, getVideoForSummary } from "@/lib/db";
+import { claimSummaryGeneration, completeSummaryGeneration, failSummaryGeneration, getFreshVideoForSummary } from "@/lib/db";
 import { runtimeVideoArtifactProvider } from "@/lib/providers/runtime";
 import { handleSummaryPost } from "@/lib/summary-generation";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
@@ -12,7 +12,7 @@ export async function POST(request: Request, context: Context) {
   const { video_uid: videoUid } = await context.params;
   return handleSummaryPost(request, videoUid, {
     getUser: getAuthenticatedUser,
-    loadVideo: getVideoForSummary,
+    loadVideo: getFreshVideoForSummary,
     claim: claimSummaryGeneration,
     ensureSummary: (uid) => runtimeVideoArtifactProvider().ensureSummary(uid),
     complete: completeSummaryGeneration,

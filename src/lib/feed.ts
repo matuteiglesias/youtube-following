@@ -36,7 +36,7 @@ export type FeedItem = {
     thumbnail_url: string | null;
   };
   summary: {
-    state: "available" | "generating" | "not_requested" | "short_video" | "long_video" | "live_or_upcoming" | "quota_blocked" | "failed";
+    state: "available" | "generating" | "not_requested" | "short_video" | "long_video" | "live_or_upcoming" | "metadata_pending" | "generation_not_enabled" | "quota_blocked" | "failed";
     summary_id: string | null;
     summary: string | null;
     key_points: string[];
@@ -53,7 +53,9 @@ export function summaryStateLabel(state: FeedItem["summary"]["state"]): string {
     case "short_video": return "Short clip · no summary";
     case "long_video": return "Long video · summary unavailable";
     case "live_or_upcoming": return "Live or upcoming · not summarized";
+    case "generation_not_enabled": return "New summaries are not activated";
     case "quota_blocked": return "Summary allowance reached";
+    case "metadata_pending": return "Waiting for completed-video details";
     case "failed": return "Summary temporarily unavailable";
     case "not_requested": return "No summary yet";
   }

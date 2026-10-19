@@ -74,7 +74,7 @@ test("feed page uses the last visible item as its next keyset cursor", () => {
 });
 
 test("feed presents every D5 summary state with bounded, user-safe copy", () => {
-  const states = ["available", "generating", "not_requested", "short_video", "long_video", "live_or_upcoming", "quota_blocked", "failed"];
+  const states = ["available", "generating", "not_requested", "short_video", "long_video", "live_or_upcoming", "quota_blocked", "generation_not_enabled", "metadata_pending", "failed"];
   for (const state of states) assert.ok(summaryStateLabel(state), state);
   assert.equal(summaryStateLabel("quota_blocked"), "Summary allowance reached");
   assert.equal(summaryStateLabel("failed"), "Summary temporarily unavailable");
