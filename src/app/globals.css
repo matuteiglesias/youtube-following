@@ -292,3 +292,6 @@ main.shell:has(.feed-workspace) { max-width: 1220px; }
 .auth-alternative { border-top: 1px solid #e5eaee; padding-top: 18px; margin-top: 10px; }
 .auth-alternative summary { cursor: pointer; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .auth-alternative form { padding-top: 16px; }
+
+.follow-access-note { border: 1px solid #d4dfe9; background: #f6f9fc; border-radius: 10px; padding: 16px; margin: 0 0 22px; line-height: 1.5; }
+.follow-access-note p { color: #4c5b66; margin: 6px 0 0; }

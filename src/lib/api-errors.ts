@@ -8,7 +8,8 @@ export function productError(error: unknown): { status: number; body: { error: {
         : error.code === "invalid_channel" ? 400 : 503;
     const code = error.code === "invalid_channel" ? "INVALID_CHANNEL_REFERENCE"
       : error.code === "channel_not_resolved" ? "CHANNEL_NOT_FOUND"
-        : error.code === "follow_limit_reached" ? "FOLLOW_LIMIT_REACHED" : "PROVIDER_UNAVAILABLE";
+        : error.code === "follow_limit_reached" ? "FOLLOW_LIMIT_REACHED"
+        : error.code === "follow_mutation_failed" ? "FOLLOW_SERVICE_UNAVAILABLE" : "PROVIDER_UNAVAILABLE";
     return { status, body: { error: { code, message: error.message } } };
   }
   if (error instanceof ProviderError) {

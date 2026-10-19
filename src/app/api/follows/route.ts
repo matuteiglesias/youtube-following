@@ -1,6 +1,7 @@
 import { getEntitlement, listMyFollows, followRepository } from "@/lib/db";
 import { followChannel } from "@/lib/follow-lifecycle";
 import { productError } from "@/lib/api-errors";
+import { followEntitlementGate } from "@/lib/follow-entitlement";
 import { runtimeUploadFrontierProvider, runtimeVideoArtifactProvider } from "@/lib/providers/runtime";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
 
@@ -40,6 +41,27 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch { body = null; }
   const channelUid = body && typeof body === "object" && typeof (body as { channel_uid?: unknown }).channel_uid === "string"
     ? (body as { channel_uid: string }).channel_uid : "";
+  // Resolve can be useful without a plan, but Follow is gated by a server-side
+  // entitlement. Check it explicitly so a denied account is not reported as a
+  // YouTube outage. The atomic database RPC still enforces this independently.
+  let entitlement: Awaited<ReturnType<typeof getEntitlement>>;
+  try {
+    entitlement = await getEntitlement(user.id);
+  } catch {
+    console.error("follow_entitlement_read_failed");
+    return Response.json({ error: {
+      code: "FOLLOW_SERVICE_UNAVAILABLE", message: "We couldn't check your follow access. Try again shortly.",
+    } }, { status: 503 });
+  }
+  const gate = followEntitlementGate(entitlement);
+  if (gate) {
+    return Response.json({ error: {
+      code: gate === "access_not_enabled" ? "ACCESS_NOT_ENABLED" : "FOLLOW_ACCESS_EXPIRED",
+      message: gate === "access_not_enabled"
+        ? "Your account needs a pilot or paid plan before you can follow channels."
+        : "Your follow access is inactive or expired.",
+    } }, { status: 403 });
+  }
   try {
     const result = await followChannel(user.id, channelUid, runtimeUploadFrontierProvider, runtimeVideoArtifactProvider, followRepository());
     const { created, ...follow } = result.follow;
