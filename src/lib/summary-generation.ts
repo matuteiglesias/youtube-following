@@ -78,8 +78,9 @@ export async function handleSummaryPost(_request: Request, videoUid: string, dep
       }
     }
     if (claim.state === "generating") return response({ state: "generating" }, 202);
-    if (claim.state === "quota_blocked") return response({ state: "quota_blocked" });
-    if (claim.state === "short_video" || claim.state === "long_video" || claim.state === "live_or_upcoming") {
+    if (claim.state === "quota_blocked" || claim.state === "generation_not_enabled")
+      return response({ state: claim.state });
+    if (claim.state === "short_video" || claim.state === "long_video" || claim.state === "live_or_upcoming" || claim.state === "metadata_pending") {
       return response({ state: claim.state });
     }
     if (claim.state === "failed") return response({ state: "failed", retryable: claim.retryable ?? false });

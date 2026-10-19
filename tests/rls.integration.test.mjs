@@ -10,6 +10,8 @@ const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_e
 const d7MigrationUrl = new URL("../supabase/migrations/202610050005_d7_billing.sql", import.meta.url);
 const d8MigrationUrl = new URL("../supabase/migrations/202610050006_d8_demo_feed.sql", import.meta.url);
 const freeFollowingMigrationUrl = new URL("../supabase/migrations/202610190001_free_following_99.sql", import.meta.url);
+const feedLiveMigrationUrl = new URL("../supabase/migrations/202610190002_feed_live_metadata.sql", import.meta.url);
+const metadataGateMigrationUrl = new URL("../supabase/migrations/202610190003_summary_metadata_gate.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -35,6 +37,8 @@ async function createDatabase() {
   await db.exec(await readFile(d7MigrationUrl, "utf8"));
   await db.exec(await readFile(d8MigrationUrl, "utf8"));
   await db.exec(await readFile(freeFollowingMigrationUrl, "utf8"));
+  await db.exec(await readFile(feedLiveMigrationUrl, "utf8"));
+  await db.exec(await readFile(metadataGateMigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -281,6 +285,39 @@ test("D4 feed RPC scopes to follows, pages by published_at and video_uid, and in
   )));
 });
 
+test("incomplete or scheduled video metadata cannot consume inference, and feed carries live state",async (t)=>{
+  const db=await createDatabase(); t.after(()=>db.close());
+  const a="00000000-0000-0000-0000-00000000000a";
+  await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
+  await db.exec("set role service_role");
+  await db.query("select public.grant_internal_test_entitlement($1,99,240)",[a]);
+  await db.exec(
+    "insert into public.videos(video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status) " +
+    "values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','Incomplete','https://youtube.com/watch?v=abcdefghijk',now(),null,'public','unknown')");
+  const before=await db.query("select * from public.read_feed_page($1,null,null,null,20)",[a]);
+  const video=before.rows.find((row)=>row.feed_item.video.video_uid==="youtube:abcdefghijk");
+  assert.equal(video.feed_item.video.live_status,"unknown");
+  const key="sha256:"+("f".repeat(64));
+  const blocked=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',1) as result",[a,"youtube:abcdefghijk",key]);
+  assert.equal(blocked.rows[0].result.state,"metadata_pending");
+  assert.equal((await db.query("select count(*)::int as n from public.summary_generation_claims")).rows[0].n,0);
+  await db.exec("update public.videos set live_status='completed',duration_seconds=829 where video_uid='youtube:abcdefghijk'");
+  const claimed=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',14) as result",[a,"youtube:abcdefghijk",key]);
+  assert.equal(claimed.rows[0].result.state,"claimed");
+  const done=await db.query("select public.complete_summary_generation($1,$2,$3,$4,$5,$6,$7,$8) as saved",
+    [key,a,"provider-summary-unique","A cached result.",["Key point"],"es","Media Monitor","model"]);
+  assert.equal(done.rows[0].saved,true);
+  const b="00000000-0000-0000-0000-00000000000b";
+  const cached=await db.query("select public.claim_summary_generation($1,$2,$3,'v1','primary',14) as result",
+    [b,"youtube:abcdefghijk",key]);
+  assert.equal(cached.rows[0].result.state,"available");
+  assert.equal((await db.query("select count(*)::int as n from public.summary_usage")).rows[0].n,1);
+  const feed=await db.query("select feed_item from public.read_feed_page($1,null,null,null,20)",[b]);
+  const withSummary=feed.rows.find((row)=>row.feed_item.video.video_uid==="youtube:abcdefghijk");
+  assert.equal(withSummary.feed_item.summary.summary,"A cached result.");
+  await db.exec("reset role");
+});
+
 test("D5 serializes global claims, charges only the successful winner, and reuses the cache", async (t) => {
   const db = await createDatabase();
   t.after(() => db.close());
@@ -365,9 +402,9 @@ test("D5 reserves allowance atomically across different concurrent summaries", a
   await db.exec("delete from public.summary_usage; delete from public.summary_generation_claims; delete from public.summaries");
   await db.exec("set role service_role");
   await db.query("select public.grant_internal_test_entitlement($1, 30, 4)", [a]);
-  await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability)
-    values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','One','https://youtube.com/watch?v=abcdefghijk',now(),121,'public'),
-           ('youtube:lmnopqrstuv','youtube-channel:UC1','lmnopqrstuv','Two','https://youtube.com/watch?v=lmnopqrstuv',now(),121,'public')`);
+  await db.exec(`insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status)
+    values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','One','https://youtube.com/watch?v=abcdefghijk',now(),121,'public','completed'),
+           ('youtube:lmnopqrstuv','youtube-channel:UC1','lmnopqrstuv','Two','https://youtube.com/watch?v=lmnopqrstuv',now(),121,'public','completed')`);
   const firstKey = `sha256:${"e".repeat(64)}`;
   const secondKey = `sha256:${"f".repeat(64)}`;
   const first = await db.query("select public.claim_summary_generation($1,$2,$3,$4,$5,$6) as result",

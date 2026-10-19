@@ -76,7 +76,7 @@ function productVideo(payload: unknown): Video {
     throw new ProviderError("invalid_response", "Media Monitor returned an invalid video");
   }
   const durationValue = pick(metadata, "duration_seconds", "duration");
-  const duration = typeof durationValue === "number" && Number.isFinite(durationValue) && durationValue >= 0
+  const duration = typeof durationValue === "number" && Number.isFinite(durationValue) && durationValue > 0
     ? Math.floor(durationValue)
     : null;
   const rawAvailability = stringValue(pick(metadata, "availability", "privacy_status"))?.toLowerCase();
@@ -96,7 +96,8 @@ function productVideo(payload: unknown): Video {
     native_video_id: nativeVideoId,
     title,
     canonical_url: `https://www.youtube.com/watch?v=${nativeVideoId}`,
-    thumbnail_url: nullableHttpsUrl(pick(metadata, "thumbnail_url", "thumbnail")),
+    thumbnail_url: nullableHttpsUrl(pick(metadata, "thumbnail_url", "thumbnail"))
+      ?? `https://i.ytimg.com/vi/${nativeVideoId}/hqdefault.jpg`,
     published_at: publishedDate.toISOString(),
     duration_seconds: duration,
     availability,

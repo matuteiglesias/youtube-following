@@ -18,7 +18,7 @@ type Props = {
 };
 
 function durationLabel(seconds: number | null): string | null {
-  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return null;
   const total = Math.floor(seconds);
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -51,7 +51,8 @@ export function mayAutoRequestSummary(demo: boolean, item: FeedItem): boolean {
     && item.video.live_status !== "live"
     && item.video.live_status !== "upcoming"
     && item.video.availability === "public"
-    && (item.video.duration_seconds === null || item.video.duration_seconds >= 90 && item.video.duration_seconds <= 7200);
+    && (item.video.duration_seconds === null || item.video.duration_seconds <= 0
+      || item.video.duration_seconds >= 90 && item.video.duration_seconds <= 7200);
 }
 
 export function shouldAutoRequestSelectedSummary(
@@ -72,9 +73,9 @@ function FeedCard({ item, onSelect, selected }: {
   const duration = durationLabel(item.video.duration_seconds);
   const availability = availabilityLabel(item.video.availability);
   return <article className={`feed-card${selected ? " feed-card--selected" : ""}`}>
-    {item.video.thumbnail_url
-      ? <img className="feed-card__thumbnail" src={item.video.thumbnail_url} alt="" loading="lazy" />
-      : <div className="feed-card__thumbnail feed-card__thumbnail--empty" aria-hidden="true">No thumbnail</div>}
+    <img className="feed-card__thumbnail"
+      src={item.video.thumbnail_url ?? `https://i.ytimg.com/vi/${item.video.native_video_id}/hqdefault.jpg`}
+      alt="" loading="lazy" />
     <div className="feed-card__body">
       <p className="feed-card__metadata">
         <a href={item.channel.canonical_url} target="_blank" rel="noreferrer">{item.channel.title}</a>
@@ -87,8 +88,12 @@ function FeedCard({ item, onSelect, selected }: {
       <section className="feed-card__summary" aria-label="Summary status">
         <h3>{summaryStateLabel(item.summary.state)}</h3>
         {item.summary.state === "available" && item.summary.summary
-          ? <p className="feed-card__summary-preview">{item.summary.summary}</p>
-          : null}
+          ? <>
+            <p className="feed-card__summary-preview">{item.summary.summary}</p>
+            {item.summary.key_points.length > 0
+              ? <ul className="feed-card__key-points">{item.summary.key_points.slice(0, 2).map(
+                (point, index) => <li key={index}>{point}</li>)}</ul> : null}
+          </> : null}
       </section>
       <div className="feed-card__actions">
         <button className="feed-card__open" type="button"
@@ -133,8 +138,13 @@ function VideoSidecar({ item, demo, onClose, onRetry, canRetry }: {
         {item.summary.state === "available" && item.summary.key_points.length > 0
           ? <ul>{item.summary.key_points.slice(0, 3).map((point, index) => <li key={`${index}-${point}`}>{point}</li>)}</ul>
           : null}
-        {!demo && (item.summary.state === "failed" && item.summary.retryable || canRetry)
+        {!demo && (item.summary.state === "metadata_pending"
+          || item.summary.state === "failed" && item.summary.retryable || canRetry)
           ? <button type="button" onClick={() => onRetry(item.video.video_uid)}>Retry summary</button> : null}
+        {item.summary.state === "generation_not_enabled" && !demo
+          ? <p>Activate your first-user trial in <a href="/account">Account</a>, or use an active summary plan. Previously cached summaries remain free.</p> : null}
+        {item.summary.state === "metadata_pending"
+          ? <p>Waiting for YouTube to provide a completed-video duration. Try again after publication.</p> : null}
         {demo && item.summary.state !== "available"
           ? <p>Only previously cached summaries appear in the public demo.</p> : null}
       </section>

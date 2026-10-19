@@ -10,6 +10,8 @@ const migrationNames = [
   "202610050004_d5_summary_engine.sql",
   "202610050005_d7_billing.sql",
   "202610190001_free_following_99.sql",
+  "202610190002_feed_live_metadata.sql",
+  "202610190003_summary_metadata_gate.sql",
 ];
 
 async function createDatabase() {
@@ -32,8 +34,8 @@ async function createDatabase() {
     insert into auth.users (id,email) values ('00000000-0000-4000-8000-00000000000a','a@example.test');
     insert into public.channels (channel_uid,native_channel_id,title,canonical_url)
       values ('youtube-channel:UC1','UC1','Test','https://youtube.com/channel/UC1');
-    insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability)
-      values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','Video','https://youtube.com/watch?v=abcdefghijk',now(),121,'public');
+    insert into public.videos (video_uid,channel_uid,native_video_id,title,canonical_url,published_at,duration_seconds,availability,live_status)
+      values ('youtube:abcdefghijk','youtube-channel:UC1','abcdefghijk','Video','https://youtube.com/watch?v=abcdefghijk',now(),121,'public','completed');
   `);
   return db;
 }
@@ -82,7 +84,7 @@ test("billing expiry blocks new summaries but not free channel following", async
   const expiredSummary = await db.query(`select public.claim_summary_generation(
     '00000000-0000-4000-8000-00000000000a','youtube:abcdefghijk',
     'sha256:${"c".repeat(64)}','v1','primary',3) as result`);
-  assert.equal(expiredSummary.rows[0].result.state, "quota_blocked");
+  assert.equal(expiredSummary.rows[0].result.state, "generation_not_enabled");
   await db.query("delete from public.follows where user_id='00000000-0000-4000-8000-00000000000a'");
   const freeFollow = await db.query("select * from public.create_follow_with_limit('00000000-0000-4000-8000-00000000000a','youtube-channel:UC1')");
   assert.equal(freeFollow.rows[0].created, true);
@@ -98,7 +100,7 @@ test("billing expiry blocks new summaries but not free channel following", async
   const blocked = await db.query(`select public.claim_summary_generation(
     '00000000-0000-4000-8000-00000000000a','youtube:abcdefghijk',
     'sha256:${"b".repeat(64)}','v1','primary',3) as result`);
-  assert.equal(blocked.rows[0].result.state, "quota_blocked");
+  assert.equal(blocked.rows[0].result.state, "generation_not_enabled");
 });
 
 test("a browser role cannot apply a billing event or change its own plan", async (t) => {
