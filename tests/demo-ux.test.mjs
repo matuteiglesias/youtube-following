@@ -76,7 +76,9 @@ test("anonymous demo cards can never enter the automatic summary request frontie
   const candidate = item("not_requested");
   assert.equal(mayAutoRequestSummary(true, candidate), false);
   assert.equal(mayAutoRequestSummary(false, candidate), true);
-  assert.equal(mayAutoRequestSummary(false, { ...candidate, video: { ...candidate.video, duration_seconds: 30 } }), false);
+  assert.equal(mayAutoRequestSummary(false, { ...candidate, video: { ...candidate.video, duration_seconds: 30 } }), true);
+  assert.equal(mayAutoRequestSummary(false, { ...candidate, video: { ...candidate.video, duration_seconds: 63 } }), true);
+  assert.equal(mayAutoRequestSummary(false, { ...candidate, video: { ...candidate.video, duration_seconds: 29 } }), false);
 });
 
 test("Feed component renders each summary state and safe error and empty states", () => {
