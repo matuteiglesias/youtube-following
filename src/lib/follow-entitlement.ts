@@ -1,22 +1,11 @@
-/** Keep this gate aligned with the service-role create_follow_with_limit RPC.
- * The RPC remains the authoritative enforcement point.
+/**
+ * Free channel following is an independent capability, not a paid entitlement.
+ * The Postgres create_follow_with_limit RPC enforces the same minimum of 99,
+ * serialized on the user's entitlement row to prevent concurrent overshoot.
  */
-export type FollowEntitlement = {
-  follow_limit: number;
-  status: string;
-  period_end: string | null;
-};
-export type FollowEntitlementGate = "access_not_enabled" | "access_expired" | null;
+export const DEFAULT_FOLLOW_LIMIT = 99;
 
-export function followEntitlementGate(
-  entitlement: FollowEntitlement | null,
-  now = Date.now(),
-): FollowEntitlementGate {
-  if (!entitlement || entitlement.follow_limit <= 0 || entitlement.status === "none") {
-    return "access_not_enabled";
-  }
-  const end = entitlement.period_end ? Date.parse(entitlement.period_end) : NaN;
-  if (!["active", "canceled"].includes(entitlement.status)
-    || !Number.isFinite(end) || end <= now) return "access_expired";
-  return null;
+export function effectiveFollowLimit(legacyPaidLimit: number): number {
+  return Math.max(DEFAULT_FOLLOW_LIMIT,
+    Number.isSafeInteger(legacyPaidLimit) && legacyPaidLimit >= 0 ? legacyPaidLimit : 0);
 }

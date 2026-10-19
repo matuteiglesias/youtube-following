@@ -12,6 +12,7 @@ const migrations = [
   "202610050006_d8_demo_feed.sql",
   "202610060001_d6_channel_sync.sql",
   "202610060002_daily_digest.sql",
+  "202610190001_free_following_99.sql",
 ].map((name) => new URL(`../supabase/migrations/${name}`, import.meta.url));
 
 async function createDatabase() {

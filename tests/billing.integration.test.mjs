@@ -9,6 +9,7 @@ const migrationNames = [
   "202610050003_d4_feed.sql",
   "202610050004_d5_summary_engine.sql",
   "202610050005_d7_billing.sql",
+  "202610190001_free_following_99.sql",
 ];
 
 async function createDatabase() {
@@ -63,7 +64,7 @@ test("Polar event receipt and entitlement mutation are atomic, idempotent, and r
   assert.equal((await db.query("select count(*)::int as n from public.billing_webhook_events")).rows[0].n, 3);
 });
 
-test("paid-through cancellation remains authorized until period end; payment issues and expiry block access", async (t) => {
+test("billing expiry blocks new summaries but not free channel following", async (t) => {
   const db = await createDatabase();
   t.after(() => db.close());
   assert.equal(await apply(db), "applied");
@@ -83,7 +84,8 @@ test("paid-through cancellation remains authorized until period end; payment iss
     'sha256:${"c".repeat(64)}','v1','primary',3) as result`);
   assert.equal(expiredSummary.rows[0].result.state, "quota_blocked");
   await db.query("delete from public.follows where user_id='00000000-0000-4000-8000-00000000000a'");
-  await assert.rejects(db.query("select * from public.create_follow_with_limit('00000000-0000-4000-8000-00000000000a','youtube-channel:UC1')"));
+  const freeFollow = await db.query("select * from public.create_follow_with_limit('00000000-0000-4000-8000-00000000000a','youtube-channel:UC1')");
+  assert.equal(freeFollow.rows[0].created, true);
 
   assert.equal(await apply(db, { eventId: "expired", action: "canceled", eventAt: "2026-11-01T00:00:00Z", periodStart: "2026-10-01T00:00:00Z", periodEnd: "2026-10-02T00:00:00Z" }), "applied");
   assert.deepEqual((await db.query("select plan_code,status,follow_limit,generation_minutes_limit from public.entitlements")).rows[0], {

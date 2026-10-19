@@ -1,3 +1,4 @@
+import { effectiveFollowLimit } from "../follow-entitlement.ts";
 import type { BillingEntitlement, EntitlementView } from "./contracts";
 
 type Dependencies = {
@@ -23,7 +24,7 @@ export async function handleEntitlementGet(deps: Dependencies) {
     const view: EntitlementView = {
       plan_code: effective.plan_code,
       status: effective.status,
-      follow_limit: effective.follow_limit,
+      follow_limit: effectiveFollowLimit(effective.follow_limit),
       follow_count: usage.followCount,
       generation_minutes_limit: effective.generation_minutes_limit,
       generation_minutes_used: usage.generationMinutesUsed,

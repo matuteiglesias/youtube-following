@@ -96,7 +96,7 @@ test("entitlement endpoint returns only public view fields and normalizes expire
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
-    plan_code: "none", status: "none", follow_limit: 0, follow_count: 4,
+    plan_code: "none", status: "none", follow_limit: 99, follow_count: 4,
     generation_minutes_limit: 0, generation_minutes_used: 20, period_start: null, period_end: null,
   });
   assert.deepEqual(calls, [[userId, null]]);
@@ -113,7 +113,7 @@ test("entitlement endpoint does not present an expired active period as paid", a
   const view = await response.json();
   assert.equal(view.plan_code, "none");
   assert.equal(view.status, "none");
-  assert.equal(view.follow_limit, 0);
+  assert.equal(view.follow_limit, 99);
   assert.equal(view.generation_minutes_limit, 0);
 });
 

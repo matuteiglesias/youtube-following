@@ -18,7 +18,7 @@ const CHECKOUT_UNAVAILABLE = "Checkout is temporarily unavailable. Your account 
 
 export function EntitlementSummary({ entitlement }: { entitlement: Entitlement }) {
   return <div className="entitlement-card" aria-label="Current entitlement">
-    <h2>{entitlement.plan_code === "paid" ? "Paid plan" : entitlement.plan_code === "internal_test" ? "Internal test plan" : "No active plan"}</h2>
+    <h2>{entitlement.plan_code === "paid" ? "Paid summaries plan" : entitlement.plan_code === "internal_test" ? "Internal test summaries" : "Free channel following"}</h2>
     <p>Status: {entitlement.status.replaceAll("_", " ")}</p>
     <p>Channels: {entitlement.follow_count} / {entitlement.follow_limit}</p>
     <p>New summaries: {entitlement.generation_minutes_used} / {entitlement.generation_minutes_limit} minutes this period</p>
@@ -68,7 +68,7 @@ export function AccountPlan() {
     {entitlement ? <EntitlementSummary entitlement={entitlement} /> : null}
     <div className="pricing-card">
       <h2>YouTube Following · $3.99/month</h2>
-      <p>Follow up to 30 channels and generate up to 600 minutes of new summaries per month. Cached summaries don’t use your allowance.</p>
+      <p>Following up to 99 channels is free. This plan adds up to 600 minutes of new summaries per month. Cached summaries don’t use your allowance.</p>
       <button type="button" onClick={startCheckout} disabled={checkoutBusy || entitlement?.plan_code === "paid" && entitlement.status === "active"}>
         {checkoutBusy ? "Opening checkout…" : entitlement?.plan_code === "paid" && entitlement.status === "active" ? "Plan active" : "Choose this plan"}
       </button>

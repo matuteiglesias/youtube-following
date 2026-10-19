@@ -1,3 +1,5 @@
+> **Historical incident record (superseded 2026-10-19).** The free Following baseline now allows 99 channels for every authenticated account, without a pilot entitlement. See [free-following-99.md](./free-following-99.md). The earlier grant instructions below apply only to generation-enabled pilot usage, not to following channels.
+
 # Follow 503 triage — 2026-10-19
 
 ## Evidence collected
