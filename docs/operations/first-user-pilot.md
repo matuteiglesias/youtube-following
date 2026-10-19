@@ -28,8 +28,13 @@ acceptance pilot, **not** a paid launch or proof of end-to-end summary quality.
    fails, record it as an auth blocker, not a UI problem.
 2. In **Following**, paste `https://www.youtube.com/@ElDestapeTV`;
    inspect the canonical preview, then confirm **Follow**.
-3. Repeat with `https://www.youtube.com/@FuturockFM`. The canonical preview
+3. Repeat with `https://www.youtube.com/@futurock`. The canonical preview
    matters: a handle alone should never create a silent follow.
+   **Channel identity check:** As of October 19, the public Atom feed for
+   `@futurock` / channel ID `UCgn6r0aGRBnEQm02tE_jzbw` listed 15 recent
+   items. A distinct older channel associated with `@FuturockFM` / ID
+   `UCMIoDzB2T3H-eCPtWNWuGow` returned zero. Do not follow that older channel
+   by accident.
 4. Open **Feed**. Confirm new-to-old order, both channels visible, reasonable
    thumbnails/titles/timestamps, and an available external YouTube link.
    **Read summary** opens the selected-video sidecar; on phones this is a
