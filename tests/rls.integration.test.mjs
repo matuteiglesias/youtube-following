@@ -9,6 +9,7 @@ const d4MigrationUrl = new URL("../supabase/migrations/202610050003_d4_feed.sql"
 const d5MigrationUrl = new URL("../supabase/migrations/202610050004_d5_summary_engine.sql", import.meta.url);
 const d7MigrationUrl = new URL("../supabase/migrations/202610050005_d7_billing.sql", import.meta.url);
 const d8MigrationUrl = new URL("../supabase/migrations/202610050006_d8_demo_feed.sql", import.meta.url);
+const freeFollowingMigrationUrl = new URL("../supabase/migrations/202610190001_free_following_99.sql", import.meta.url);
 
 async function createDatabase() {
   const db = new PGlite();
@@ -33,6 +34,7 @@ async function createDatabase() {
   await db.exec(await readFile(d5MigrationUrl, "utf8"));
   await db.exec(await readFile(d7MigrationUrl, "utf8"));
   await db.exec(await readFile(d8MigrationUrl, "utf8"));
+  await db.exec(await readFile(freeFollowingMigrationUrl, "utf8"));
   await db.exec(`
     insert into auth.users (id, email) values
       ('00000000-0000-0000-0000-00000000000a', 'a@example.test'),
@@ -166,7 +168,7 @@ test("internal-test entitlements are callable only through the server role", asy
   assert.deepEqual(entitlement.rows[0], { plan_code: "internal_test", status: "active", follow_limit: 30, generation_minutes_limit: 600 });
 });
 
-test("follow-limit RPC is server-only, idempotent, and rejects the next follow", async (t) => {
+test("follow-limit RPC is server-only, idempotent, and independent from summary entitlement", async (t) => {
   const db = await createDatabase();
   t.after(() => db.close());
   const a = "00000000-0000-0000-0000-00000000000a";
@@ -180,9 +182,39 @@ test("follow-limit RPC is server-only, idempotent, and rejects the next follow",
   assert.equal(first.rows[0].created, true);
   assert.equal(replay.rows[0].created, false);
   await db.exec("set role service_role");
-  await assert.rejects(db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"]));
+  const second = await db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"]);
+  assert.equal(second.rows[0].created, true);
   await db.exec("reset role");
   await assert.rejects(asRole(db, "authenticated", a, () => db.query("select * from public.create_follow_with_limit($1, $2)", [a, "youtube-channel:UC2"])));
+});
+
+test("a non-paying new user may follow 99 channels but not the 100th", async (t) => {
+  const db = await createDatabase();
+  t.after(() => db.close());
+  const a = "00000000-0000-0000-0000-00000000000a";
+  await db.exec("set role service_role");
+  await db.query("delete from public.follows where user_id=$1",[a]);
+  await db.exec(
+    "insert into public.channels(channel_uid, native_channel_id, title, canonical_url) " +
+    "select 'youtube-channel:UCfree' || lpad(n::text,3,'0'), " +
+    "'UCfree' || lpad(n::text,3,'0'), 'Free ' || n, " +
+    "'https://youtube.com/channel/UCfree' || lpad(n::text,3,'0') " +
+    "from generate_series(1,100) n"
+  );
+  await db.exec("begin");
+  for (let n=1;n<=99;n++) {
+    const uid = "youtube-channel:UCfree" + String(n).padStart(3, "0");
+    const result = await db.query("select * from public.create_follow_with_limit($1,$2)", [a,uid]);
+    assert.equal(result.rows[0].created,true);
+  }
+  await db.exec("commit");
+  const count = await db.query("select count(*)::int as n from public.follows where user_id=$1",[a]);
+  assert.equal(count.rows[0].n, 99);
+  await assert.rejects(db.query("select * from public.create_follow_with_limit($1,$2)",
+    [a,"youtube-channel:UCfree100"]),/follow_limit_reached/);
+  const quota = await db.query("select plan_code,follow_limit,generation_minutes_limit from public.entitlements where user_id=$1",[a]);
+  assert.deepEqual(quota.rows[0], {plan_code:"none",follow_limit:0,generation_minutes_limit:0});
+  await db.exec("reset role");
 });
 
 test("D4 feed RPC scopes to follows, pages by published_at and video_uid, and includes only available cached summaries", async (t) => {

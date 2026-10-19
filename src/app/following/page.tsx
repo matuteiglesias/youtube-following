@@ -1,6 +1,7 @@
 import { requireAuthenticatedUser } from "@/lib/supabase/auth";
 import { getEntitlement, listMyFollows } from "@/lib/db";
 import { FollowingScreen } from "@/components/following-screen";
+import { effectiveFollowLimit } from "@/lib/follow-entitlement";
 
 export default async function FollowingPage() {
   const user = await requireAuthenticatedUser();
@@ -10,7 +11,7 @@ export default async function FollowingPage() {
   try {
     [items, limit] = await Promise.all([
       listMyFollows(user.id),
-      getEntitlement(user.id).then((entitlement) => entitlement?.follow_limit ?? 0),
+      getEntitlement(user.id).then((entitlement) => entitlement ? effectiveFollowLimit(entitlement.follow_limit) : 0),
     ]);
   } catch {
     initialError = true;

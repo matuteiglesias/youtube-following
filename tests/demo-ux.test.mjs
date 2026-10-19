@@ -106,13 +106,14 @@ test("account plan displays single-plan pricing and the documented entitlement v
   const price = renderToStaticMarkup(React.createElement(AccountPlan));
   assert.match(price, /\$3\.99\/month/);
   assert.match(price, /600 minutes/);
+  assert.match(price, /Following up to 99 channels is free/);
   assert.match(price, /Choose this plan/);
   const entitlement = renderToStaticMarkup(React.createElement(EntitlementSummary, { entitlement: {
     plan_code: "paid", status: "active", follow_limit: 30, follow_count: 12,
     generation_minutes_limit: 600, generation_minutes_used: 75,
     period_start: "2026-10-01T00:00:00.000Z", period_end: "2026-11-01T00:00:00.000Z",
   } }));
-  assert.match(entitlement, /Paid plan/);
+  assert.match(entitlement, /Paid summaries plan/);
   assert.match(entitlement, /Channels: 12 \/ 30/);
   assert.match(entitlement, /75 \/ 600 minutes/);
 });
@@ -149,15 +150,10 @@ test("feed exposes a selected-video sidecar affordance without requiring inferen
   assert.doesNotMatch(html, /Retry summary/);
 });
 
-test("zero follow allowance shows a pilot-access warning rather than a YouTube error", () => {
+test("zero follow allowance now indicates a broken account load rather than asking for paid access", () => {
   const html = renderToStaticMarkup(React.createElement(FollowingScreen, {
     initialItems: [], limit: 0, initialError: false,
   }));
-  assert.match(html, /Following is not enabled for this account/);
-  assert.match(html, /pilot entitlement must be granted/);
-  assert.doesNotMatch(html, /YouTube is temporarily unavailable/);
-  assert.equal(safeFollowingErrorMessage({error: {code: "ACCESS_NOT_ENABLED"}}),
-    "Your account needs a pilot or paid plan before following channels.");
-  assert.equal(safeFollowingErrorMessage({error: {code: "FOLLOW_SERVICE_UNAVAILABLE"}}),
-    "We couldn't update your follows. Try again shortly.");
+  assert.match(html, /follow allowance could not be loaded/);
+  assert.doesNotMatch(html, /pilot entitlement must be granted/);
 });
