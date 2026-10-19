@@ -17,7 +17,7 @@ for (const name of ["account-plan", "feed-screen", "following-screen"]) {
   await writeFile(new URL(`${name}.mjs`, built), compiled);
 }
 const { AccountPlan, EntitlementSummary } = await import("./.d8-generated/account-plan.mjs");
-const { FeedScreen, mayAutoRequestSummary } = await import("./.d8-generated/feed-screen.mjs");
+const { FeedScreen, mayAutoRequestSummary, shouldAutoRequestSelectedSummary } = await import("./.d8-generated/feed-screen.mjs");
 const { FollowingScreen, safeFollowingErrorMessage } = await import("./.d8-generated/following-screen.mjs");
 after(async () => rm(built, { recursive: true, force: true }));
 
@@ -123,4 +123,28 @@ test("responsive implementation declares mobile stack rules and acceptance recor
   assert.match(css, /@media \(max-width: 620px\)[\s\S]*?\.feed-card \{ grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css, /@media \(max-width: 520px\)/);
   assert.match(acceptance, /Browser checks still required[\s\S]*375px/);
+});
+
+test("summary requests require a selected eligible video and are not repeated after a failed attempt", () => {
+  const candidate = item("not_requested");
+  const attempted = new Set();
+  assert.equal(shouldAutoRequestSelectedSummary(false, null, attempted), false);
+  assert.equal(shouldAutoRequestSelectedSummary(true, candidate, attempted), false);
+  assert.equal(shouldAutoRequestSelectedSummary(false, candidate, attempted), true);
+  attempted.add(candidate.video.video_uid);
+  assert.equal(shouldAutoRequestSelectedSummary(false, candidate, attempted), false);
+  attempted.clear();
+  assert.equal(shouldAutoRequestSelectedSummary(false, item("available"), attempted), false);
+});
+
+test("feed exposes a selected-video sidecar affordance without requiring inference on render", () => {
+  const html = renderToStaticMarkup(React.createElement(FeedScreen, {
+    initialPage: { items: [item("available")], next_cursor: null },
+    channels: [], selectedChannelUid: null, initialError: false, filterUnavailable: false, demo: true,
+  }));
+  assert.match(html, /Selected video summary/);
+  assert.match(html, /Select a video/);
+  assert.match(html, /Read summary/);
+  assert.match(html, /aria-pressed="false"/);
+  assert.doesNotMatch(html, /Retry summary/);
 });

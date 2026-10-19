@@ -54,12 +54,26 @@ export function mayAutoRequestSummary(demo: boolean, item: FeedItem): boolean {
     && (item.video.duration_seconds === null || item.video.duration_seconds >= 90 && item.video.duration_seconds <= 7200);
 }
 
-function FeedCard({ item, onRetry }: { item: FeedItem; onRetry: (videoUid: string) => void }) {
+export function shouldAutoRequestSelectedSummary(
+  demo: boolean,
+  selectedItem: FeedItem | null,
+  attempted: ReadonlySet<string>,
+): boolean {
+  return selectedItem !== null
+    && mayAutoRequestSummary(demo, selectedItem)
+    && !attempted.has(selectedItem.video.video_uid);
+}
+
+function FeedCard({ item, onSelect, selected }: {
+  item: FeedItem;
+  onSelect: (videoUid: string) => void;
+  selected: boolean;
+}) {
   const duration = durationLabel(item.video.duration_seconds);
   const availability = availabilityLabel(item.video.availability);
-  return <article className="feed-card">
+  return <article className={`feed-card${selected ? " feed-card--selected" : ""}`}>
     {item.video.thumbnail_url
-      ? <img className="feed-card__thumbnail" src={item.video.thumbnail_url} alt="" />
+      ? <img className="feed-card__thumbnail" src={item.video.thumbnail_url} alt="" loading="lazy" />
       : <div className="feed-card__thumbnail feed-card__thumbnail--empty" aria-hidden="true">No thumbnail</div>}
     <div className="feed-card__body">
       <p className="feed-card__metadata">
@@ -73,20 +87,65 @@ function FeedCard({ item, onRetry }: { item: FeedItem; onRetry: (videoUid: strin
       <section className="feed-card__summary" aria-label="Summary status">
         <h3>{summaryStateLabel(item.summary.state)}</h3>
         {item.summary.state === "available" && item.summary.summary
-          ? <p>{item.summary.summary}</p>
+          ? <p className="feed-card__summary-preview">{item.summary.summary}</p>
           : null}
+      </section>
+      <div className="feed-card__actions">
+        <button className="feed-card__open" type="button"
+          aria-pressed={selected}
+          onClick={() => onSelect(item.video.video_uid)}>Read summary <span aria-hidden="true">→</span></button>
+        <a className="feed-card__watch" href={item.video.canonical_url} target="_blank" rel="noreferrer">
+          YouTube <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </div>
+  </article>;
+}
+
+function VideoSidecar({ item, demo, onClose, onRetry, canRetry }: {
+  item: FeedItem | null;
+  demo: boolean;
+  onClose: () => void;
+  onRetry: (videoUid: string) => void;
+  canRetry: boolean;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const itemUid = item?.video.video_uid;
+  useEffect(() => {
+    if (itemUid && window.matchMedia("(max-width: 900px)").matches) closeButton.current?.focus();
+  }, [itemUid]);
+
+  return <aside className={`video-sidecar${item ? " video-sidecar--open" : ""}`}
+    aria-label="Selected video summary" aria-live="polite">
+    {item ? <>
+      <div className="video-sidecar__header">
+        <span className="placeholder__label">Video briefing</span>
+        <button type="button" className="video-sidecar__close" ref={closeButton} onClick={onClose}
+          aria-label="Close summary">Close ×</button>
+      </div>
+      <p className="video-sidecar__channel">{item.channel.title} · <time dateTime={item.video.published_at}>{publishedLabel(item.video.published_at)}</time></p>
+      <h2>{item.video.title}</h2>
+      <p className="video-sidecar__duration">{durationLabel(item.video.duration_seconds) ?? "Duration unavailable"}</p>
+      <section className="video-sidecar__content" aria-label="Summary">
+        <h3>{summaryStateLabel(item.summary.state)}</h3>
+        {item.summary.state === "available" && item.summary.summary
+          ? <p>{item.summary.summary}</p> : null}
         {item.summary.state === "available" && item.summary.key_points.length > 0
           ? <ul>{item.summary.key_points.slice(0, 3).map((point, index) => <li key={`${index}-${point}`}>{point}</li>)}</ul>
           : null}
-        {item.summary.state === "failed" && item.summary.retryable
-          ? <button type="button" onClick={() => onRetry(item.video.video_uid)}>Try summary again</button>
-          : null}
+        {!demo && (item.summary.state === "failed" && item.summary.retryable || canRetry)
+          ? <button type="button" onClick={() => onRetry(item.video.video_uid)}>Retry summary</button> : null}
+        {demo && item.summary.state !== "available"
+          ? <p>Only previously cached summaries appear in the public demo.</p> : null}
       </section>
-      <a className="feed-card__watch" href={item.video.canonical_url} target="_blank" rel="noreferrer">
-        Watch on YouTube <span aria-hidden="true">↗</span>
-      </a>
-    </div>
-  </article>;
+      <a className="video-sidecar__watch" href={item.video.canonical_url} target="_blank" rel="noreferrer">Watch on YouTube ↗</a>
+    </> : <div className="video-sidecar__empty">
+      <span className="placeholder__label">Video briefing</span>
+      <h2>Select a video</h2>
+      <p>Open a video from the feed to read its summary and key points here.</p>
+      <p className="video-sidecar__hint">Only the video you open can trigger a new summary. Scrolling the feed costs nothing.</p>
+    </div>}
+  </aside>;
 }
 
 export function FeedScreen({ initialPage, channels, selectedChannelUid, initialError, filterUnavailable, demo = false }: Props) {
@@ -98,50 +157,68 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
   const [loading, setLoading] = useState(false);
   const activeSummaryRequests = useRef(new Set<string>());
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [selectedVideoUid, setSelectedVideoUid] = useState<string | null>(null);
+  const requestedSummaryUids = useRef(new Set<string>());
+  const [failedSummaryUids, setFailedSummaryUids] = useState<ReadonlySet<string>>(new Set());
+  const selectedItem = items.find((item) => item.video.video_uid === selectedVideoUid) ?? null;
 
   async function requestSummary(videoUid: string) {
     if (activeSummaryRequests.current.size >= 2 || activeSummaryRequests.current.has(videoUid)) return;
     activeSummaryRequests.current.add(videoUid);
+    requestedSummaryUids.current.add(videoUid);
     try {
       const response = await fetch(`/api/videos/${encodeURIComponent(videoUid)}/summary`, { method: "POST", cache: "no-store" });
       const payload = await response.json() as { summary?: FeedItem["summary"] };
       if (!response.ok || !payload.summary) throw new Error("Summary is temporarily unavailable.");
+      setFailedSummaryUids((current) => {
+        const next = new Set(current);
+        next.delete(videoUid);
+        return next;
+      });
       setItems((current) => current.map((item) => item.video.video_uid === videoUid
         && JSON.stringify(item.summary) !== JSON.stringify(payload.summary)
         ? { ...item, summary: payload.summary! } : item));
     } catch {
       setSummaryError("A summary couldn’t be loaded. Your feed is still available.");
+      setFailedSummaryUids((current) => new Set(current).add(videoUid));
     } finally {
       activeSummaryRequests.current.delete(videoUid);
       setItems((current) => [...current]);
     }
   }
 
+  // Only the explicitly selected video enters the costly summary frontier.
   useEffect(() => {
-    if (demo) return;
-    const candidates = items.filter((item) => mayAutoRequestSummary(demo, item));
-    let scheduled = 0;
-    for (const item of candidates) {
-      if (scheduled >= 2) break;
-      const uid = item.video.video_uid;
-      if (activeSummaryRequests.current.has(uid)) continue;
-      scheduled += 1;
-      window.setTimeout(() => { void requestSummary(uid); }, 0);
-    }
-  }, [demo, items]);
+    if (!shouldAutoRequestSelectedSummary(demo, selectedItem, requestedSummaryUids.current)) return;
+    void requestSummary(selectedItem!.video.video_uid);
+  }, [demo, items, selectedItem, selectedVideoUid]); // The attempted-ID set prevents re-request loops after network failures.
 
   useEffect(() => {
-    if (demo) return;
-    const generating = items.filter((item) => item.summary.state === "generating");
-    if (generating.length === 0) return;
-    const poll = window.setInterval(() => {
-      for (const item of generating) {
-        if (activeSummaryRequests.current.size >= 2) break;
-        void requestSummary(item.video.video_uid);
-      }
-    }, 4000);
+    if (demo || !selectedItem || selectedItem.summary.state !== "generating") return;
+    const uid = selectedItem.video.video_uid;
+    const poll = window.setInterval(() => { void requestSummary(uid); }, 4000);
     return () => window.clearInterval(poll);
-  }, [demo, items]);
+  }, [demo, items, selectedItem, selectedVideoUid]);
+
+  function selectVideo(videoUid: string) {
+    setSummaryError(null);
+    setSelectedVideoUid(videoUid);
+  }
+
+  function closeSelectedVideo() {
+    const button = document.querySelector<HTMLElement>(".feed-card__open[aria-pressed='true']");
+    setSelectedVideoUid(null);
+    button?.focus();
+  }
+
+  useEffect(() => {
+    if (!selectedVideoUid) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedVideoUid(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedVideoUid]);
 
   async function loadMore() {
     if (!nextCursor || loading) return;
@@ -169,6 +246,13 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
   }
 
   async function retrySummary(videoUid: string) {
+    setSummaryError(null);
+    requestedSummaryUids.current.delete(videoUid);
+    setFailedSummaryUids((current) => {
+      const next = new Set(current);
+      next.delete(videoUid);
+      return next;
+    });
     await requestSummary(videoUid);
   }
 
@@ -188,7 +272,13 @@ export function FeedScreen({ initialPage, channels, selectedChannelUid, initialE
     {error ? <p role="alert" className="feed-error">{error}</p> : null}
     {summaryError ? <p role="status" className="feed-error">{summaryError}</p> : null}
 
-    {items.length > 0 ? <div className="feed-list">{items.map((item) => <FeedCard key={item.video.video_uid} item={item} onRetry={retrySummary} />)}</div>
+    {items.length > 0 ? <div className="feed-workspace">
+      <div className="feed-list">{items.map((item) => <FeedCard key={item.video.video_uid} item={item}
+        selected={selectedVideoUid === item.video.video_uid} onSelect={selectVideo} />)}</div>
+      <VideoSidecar item={selectedItem} demo={demo} onClose={closeSelectedVideo}
+        onRetry={retrySummary} canRetry={Boolean(selectedItem && failedSummaryUids.has(selectedItem.video.video_uid)
+          && selectedItem.summary.state === "not_requested")} />
+    </div>
       : error
         ? <div className="feed-empty">
           <h2>{filterUnavailable ? error : "We couldn’t load your feed."}</h2>

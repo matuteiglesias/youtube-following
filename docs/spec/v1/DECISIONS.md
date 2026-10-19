@@ -152,3 +152,22 @@ The default response to “we may need this later” is “defer it.”
 **Bounds:** canonical reads require `window_start < window_end`, allow at most 7 days per request, return at most 100 visible items plus one overfetch row for explicit truncation, and preserve chronological ordering `published_at DESC, video_uid DESC`.
 
 **Scope:** this decision authorizes only the deterministic projection, product-owned digest contract/renderer, and a narrow authenticated read endpoint. P5 delivery remains deferred: no scheduler, email, push notification, summary generation, ranking, recommendation, or cross-video AI synthesis is commissioned here.
+
+## D-022 — Selected-video summary sidecar for the first-user pilot
+
+**Decision:** On desktop, keep the chronological Feed as the primary navigation
+surface and show a contextual reading panel for the selected video; on narrow
+screens, use a dismissible full-screen reading pane. The panel uses the existing
+product `FeedItem` contract and does not call Media Monitor directly.
+
+**Cost behavior:** Only an explicitly selected eligible video may enter the
+browser's lazy summary-generation frontier. Listing/scrolling videos does not
+initiate inference. Cached summaries remain immediately visible, and the
+public demo cannot initiate generation.
+
+**Reason:** Sidecar reading reduces attention switching between videos, preserves
+the low-noise feed, and avoids summary spend on videos not opened by the user.
+
+**Non-goals:** No transcript, chat, ranking, cross-video summaries, live-show
+agent processing, or separate sidecar service for UI. Existing server-side
+entitlement and duration gates remain authoritative.
