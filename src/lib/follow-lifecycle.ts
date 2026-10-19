@@ -18,7 +18,7 @@ export type FollowRepository = {
 };
 
 export class FollowLifecycleError extends Error {
-  readonly code: "channel_not_resolved" | "follow_limit_reached" | "provider_unavailable" | "invalid_channel";
+  readonly code: "channel_not_resolved" | "follow_limit_reached" | "provider_unavailable" | "invalid_channel" | "follow_mutation_failed";
   readonly providerDiagnosticCode: ProviderDiagnosticCode | null;
   readonly providerStatus: number | null;
 
@@ -86,7 +86,13 @@ export async function followChannel(
   repository: FollowRepository,
 ): Promise<{ follow: FollowRecord & { created: boolean }; backfill: BackfillStatus }> {
   if (!isChannelUid(channelUid)) throw new FollowLifecycleError("invalid_channel", "That doesn't look like a YouTube channel.");
-  const channel = await repository.getChannel(channelUid);
+  let channel: ChannelRecord | null;
+  try {
+    channel = await repository.getChannel(channelUid);
+  } catch {
+    console.error("follow_channel_read_failed");
+    throw new FollowLifecycleError("follow_mutation_failed", "We couldn't load this channel. Try again shortly.");
+  }
   if (!channel) throw new FollowLifecycleError("channel_not_resolved", "We couldn't find that channel.");
 
   let mutation: FollowRecord & { created: boolean };
@@ -96,17 +102,26 @@ export async function followChannel(
     if (error instanceof Error && error.message.includes("follow_limit_reached")) {
       throw new FollowLifecycleError("follow_limit_reached", "You've reached your channel limit.");
     }
-    throw new FollowLifecycleError("provider_unavailable", "We couldn't update your follows. Try again shortly.");
+    // Keep provider errors separate from DB/schema/permission failures.
+    // SQLSTATE and PostgREST codes are safe operational evidence; never log
+    // the raw query, user identifier, credentials, or full provider payload.
+    const code = error && typeof error === "object" && "code" in error
+      ? String(error.code) : "unknown";
+    console.error("follow_mutation_failed", {
+      operation: "create_follow_with_limit",
+      error_code: /^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(code) ? code : "unknown",
+    });
+    throw new FollowLifecycleError("follow_mutation_failed", "We couldn't update your follows. Try again shortly.");
   }
 
   if (!mutation.created || !isStale(channel)) {
     return { follow: mutation, backfill: "not_needed" };
   }
 
-  const frontier = frontierFactory();
-  const artifacts = artifactsFactory();
   let partial = false;
   try {
+    const frontier = frontierFactory();
+    const artifacts = artifactsFactory();
     const hints = await frontier.listRecentUploads(channel, INITIAL_BACKFILL_LIMIT);
     for (const hint of hints.slice(0, INITIAL_BACKFILL_LIMIT)) {
       try {

@@ -162,3 +162,34 @@ test("unfollow removes only the authenticated user's relationship and supports U
   assert.equal(restored.backfill, "not_needed");
   assert.equal(repo.channels.size, 1);
 });
+
+test("database mutation failures are not misdiagnosed as YouTube outages", async () => {
+  const repo = repository();
+  repo.createFollowWithLimit = async () => { throw Object.assign(new Error("private DB failure"), { code: "PGRST202" }); };
+  const original = console.error;
+  const diagnostics = [];
+  console.error = (...args) => diagnostics.push(args);
+  try {
+    await assert.rejects(followChannel("user-a", channel.channel_uid,
+      () => { throw new Error("frontier must not be reached"); },
+      () => { throw new Error("artifacts must not be reached"); }, repo),
+    (error) => error instanceof FollowLifecycleError && error.code === "follow_mutation_failed"
+      && !error.message.includes("YouTube"));
+    assert.deepEqual(diagnostics, [["follow_mutation_failed", {
+      operation: "create_follow_with_limit", error_code: "PGRST202",
+    }]]);
+  } finally {
+    console.error = original;
+  }
+});
+
+test("provider factory failure after a committed Follow is only a partial backfill", async () => {
+  const repo = repository();
+  const result = await followChannel("user-a", channel.channel_uid, () => {
+    throw new Error("provider configuration missing");
+  }, artifactsFor, repo);
+  assert.equal(result.follow.created, true);
+  assert.equal(result.backfill, "partial");
+  assert.equal(repo.follows.get("user-a").has(channel.channel_uid), true);
+  assert.equal(repo.calls.checked[0].status, "error");
+});

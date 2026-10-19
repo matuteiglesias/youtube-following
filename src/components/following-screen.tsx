@@ -28,6 +28,9 @@ export function safeFollowingErrorMessage(payload: unknown): string {
         CHANNEL_NOT_FOUND: "We couldn't find that channel.",
         ALREADY_FOLLOWED: "You're already following this channel.",
         FOLLOW_LIMIT_REACHED: "You've reached your channel limit.",
+        ACCESS_NOT_ENABLED: "Your account needs a pilot or paid plan before following channels.",
+        FOLLOW_ACCESS_EXPIRED: "Your follow access is inactive or expired.",
+        FOLLOW_SERVICE_UNAVAILABLE: "We couldn't update your follows. Try again shortly.",
         PROVIDER_UNAVAILABLE: "YouTube is temporarily unavailable. Try again shortly.",
         UNAUTHENTICATED: "Sign in to update your followed channels.",
       };
@@ -115,12 +118,16 @@ export function FollowingScreen({ initialItems, limit, initialError = false }: P
         <button type="submit" disabled={busy}>{busyAction === "resolve" ? "Resolving…" : "Resolve"}</button>
       </div>
     </form>
+    {!loadError && limit === 0 ? <div role="status" className="follow-access-note">
+      <strong>Following is not enabled for this account.</strong>
+      <p>Your account currently allows 0 channels. A pilot entitlement must be granted before you can follow channels and get new summaries. Channel resolution still works.</p>
+    </div> : null}
     {loadError ? <p role="alert" className="feed-error">{loadError} <button type="button" onClick={() => window.location.reload()}>Try again</button></p> : null}
     {message ? <p role="status" className="follow-message">{message} {undo ? <button type="button" className="link-button" onClick={restore} disabled={busy}>{busyAction === "restore" ? "Restoring…" : "Undo"}</button> : null}</p> : null}
     {preview ? <article className="channel-preview">
       {preview.thumbnail_url ? <img src={preview.thumbnail_url} alt="" width="72" height="72" /> : null}
       <div><h2>{preview.title}</h2><p>{preview.handle ?? "YouTube channel"}</p><a href={preview.canonical_url} rel="noreferrer">{preview.canonical_url}</a></div>
-      <button type="button" onClick={follow} disabled={busy || alreadyFollowed}>{busyAction === "follow" ? "Adding…" : alreadyFollowed ? "Already following" : "Follow"}</button>
+      <button type="button" onClick={follow} disabled={busy || alreadyFollowed || limit === 0}>{busyAction === "follow" ? "Adding…" : alreadyFollowed ? "Already following" : "Follow"}</button>
     </article> : null}
     {items.length === 0 && !loadError ? <div className="empty-following"><h2>Your feed starts with the people you choose.</h2><p>Follow a YouTube channel and its latest videos will appear here.</p></div> : null}
     {items.length > 0 ? <div className="follow-list">

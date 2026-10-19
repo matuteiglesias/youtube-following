@@ -148,3 +148,16 @@ test("feed exposes a selected-video sidecar affordance without requiring inferen
   assert.match(html, /aria-pressed="false"/);
   assert.doesNotMatch(html, /Retry summary/);
 });
+
+test("zero follow allowance shows a pilot-access warning rather than a YouTube error", () => {
+  const html = renderToStaticMarkup(React.createElement(FollowingScreen, {
+    initialItems: [], limit: 0, initialError: false,
+  }));
+  assert.match(html, /Following is not enabled for this account/);
+  assert.match(html, /pilot entitlement must be granted/);
+  assert.doesNotMatch(html, /YouTube is temporarily unavailable/);
+  assert.equal(safeFollowingErrorMessage({error: {code: "ACCESS_NOT_ENABLED"}}),
+    "Your account needs a pilot or paid plan before following channels.");
+  assert.equal(safeFollowingErrorMessage({error: {code: "FOLLOW_SERVICE_UNAVAILABLE"}}),
+    "We couldn't update your follows. Try again shortly.");
+});
